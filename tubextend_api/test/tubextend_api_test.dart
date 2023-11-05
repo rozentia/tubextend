@@ -1,14 +1,11 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tubextend_api/env.dart';
-import 'package:tubextend_api/src/summary.dart';
-import 'package:tubextend_api/src/tts/elevenlabs/get_audio.dart' as eleven;
-import 'package:tubextend_api/src/tts/elevenlabs/get_voices.dart';
-import 'package:tubextend_api/src/tts/playht/get_audio.dart' as playht;
+import 'package:tubextend_api/src/core/logger.dart';
 
 import 'package:tubextend_api/tubextend_api.dart';
 
+import 'env.dart';
 import 'test_data.dart';
 
 void main() {
@@ -19,13 +16,13 @@ void main() {
 
   test('get s list of models', () async {
     final models = await getModels(Env.openAIKey);
-    print(models);
+    logger.i(models);
     expect(models.isNotEmpty, true);
   });
 
   test('get summary of text', () async {
     final summary = await getSummaryOf(someText, Env.openAIKey);
-    print(summary);
+    logger.i(summary);
     expect(summary.isNotEmpty, true);
   });
 
@@ -36,7 +33,7 @@ void main() {
     });
 
     test('get audio from text', () async {
-      final audio = await eleven.generateSpeechFrom(
+      final audio = await generateSpeechFrom(
         apiKey: Env.elevenLabsKey,
         text: someShortText,
         fileName: 'eleven_labs_audio_test',

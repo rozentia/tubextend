@@ -12,7 +12,6 @@ environment:
 dependencies:
   dart_openai: ^4.0.0
   envied: ^0.3.0+3
-  eventsource: ^0.4.0
   flutter:
     sdk: flutter
   googleapis: ^11.4.0
@@ -27,8 +26,5 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   test: ^1.24.3
-
-dependency_overrides:
-  http: ^0.13.3
 
 flutter: null
