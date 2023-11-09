@@ -16,4 +16,10 @@ abstract class Env {
 
   @EnviedField(varName: 'PLAYHT_SECRET_KEY')
   static const String playHTApiKey = _Env.playHTApiKey;
+
+  @EnviedField(varName: 'GOOGLE_CLIENT_ID')
+  static const String googleClientId = _Env.googleClientId;
+
+  @EnviedField(varName: 'GOOGLE_CLIENT_SECRET')
+  static const String googleClientSecret = _Env.googleClientSecret;
 }
