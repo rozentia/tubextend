@@ -3,8 +3,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:googleapis_auth/auth_io.dart';
 import 'package:tubextend_api/src/core/logger.dart';
-import 'package:tubextend_api/src/yt.dart';
-import '../lib/src/core/extensions.dart';
 
 import 'package:tubextend_api/tubextend_api.dart';
 
@@ -97,10 +95,59 @@ void main() {
       expect(playlists.isNotEmpty, true);
     });
 
-    test('get videos from playlist', () async {
-      final videos = await getVideosOfPlaylists(client, testPlaylistId);
+    test('get all videos from playlist', () async {
+      final videos = await getAllVideosOfPlaylists(client, testPlaylistId);
       logger.i('retreived a total of ${videos.length} videos');
       expect(videos.isNotEmpty, true);
+    });
+
+    test('get user subscriptions', () async {
+      final subscriptions = await getUserSubscriptions(client);
+      logger.i('retreived a total of ${subscriptions.length} subscriptions');
+      expect(subscriptions.isNotEmpty, true);
+    });
+
+    test('get upload playlist id from subscription', () async {
+      final subscriptions = await getUserSubscriptions(client);
+      final uploadsPlaylistId = await getUploadsPlaylistIdFromSubscription(client, subscriptions.first);
+      logger.i('retreived uploads playlist id: $uploadsPlaylistId');
+      expect(uploadsPlaylistId.isNotEmpty, true);
+    });
+
+    test('get all videos from a playlist', () async {
+      final videos = await getAllVideosOfPlaylists(client, testPlaylistId);
+      logger.i('retreived a total of ${videos.length} videos from $testPlaylistId playlist');
+      expect(videos.isNotEmpty, true);
+    });
+
+    test('get up to X videos from a playlist', () async {
+      final videos = await getnVideosFromPlaylist(
+        client,
+        testPlaylistId,
+        maxResults: 5,
+      );
+      logger.i('retreived a total of ${videos.length} videos from $testPlaylistId playlist');
+      expect(videos.isNotEmpty, true);
+      expect(videos.length, 5);
+    });
+
+    test('get videos from playlist as paginated response', () async {
+      final response1 = await getPaginatedVideosFromPlaylist(
+        client,
+        testPlaylistId,
+        maxResults: 5,
+      );
+      logger.i('retreived a total of ${response1.data.length} videos from $testPlaylistId playlist as page 1');
+      final response2 = await getPaginatedVideosFromPlaylist(
+        client,
+        testPlaylistId,
+        maxResults: 5,
+        pageToken: response1.nextPageToken,
+      );
+      logger.i('retreived a total of ${response2.data.length} videos from $testPlaylistId playlist as page 2');
+      expect(response1.data.isNotEmpty, true);
+      expect(response2.data.isNotEmpty, true);
+      expect(response1.data.first.id != response2.data.first.id, true);
     });
   });
 }

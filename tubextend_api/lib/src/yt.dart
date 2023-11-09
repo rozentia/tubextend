@@ -1,6 +1,7 @@
 import 'package:googleapis/youtube/v3.dart';
 import 'package:http/http.dart';
 import 'package:tubextend_api/src/core/logger.dart';
+import 'package:tubextend_api/src/core/models.dart';
 import './core/extensions.dart';
 
 Future<List<String>> getYTCategoriesAsChannelIds(Client client, {String? hl, String regionCode = 'US'}) async {
@@ -92,7 +93,7 @@ Future<List<Video>> searchForVideosByString(Client client, String query) async {
   }
 }
 
-Future<List<Subscription>> getUserSubscribedChannels(Client client) async {
+Future<List<Subscription>> getUserSubscriptions(Client client) async {
   final ytApi = YouTubeApi(client);
   try {
     final List<Subscription> subscriptions = [];
@@ -138,7 +139,25 @@ Future<List<Playlist>> getUserPlaylists(Client client) async {
   }
 }
 
-Future<List<Video>> getVideosOfPlaylists(Client client, String playlistId) async {
+Future<String> getUploadsPlaylistIdFromSubscription(Client client, Subscription subscription) async {
+  final subscriptionChannelId = subscription.snippet?.resourceId?.channelId;
+  if (subscriptionChannelId == null) throw Exception('No channel id found');
+  try {
+    final ytApi = YouTubeApi(client);
+    final response = await ytApi.channels.list(
+      ['contentDetails'],
+      id: [subscriptionChannelId],
+    );
+    final uploadsPlaylistId = response.items?.first.contentDetails?.relatedPlaylists?.uploads;
+    if (uploadsPlaylistId == null) throw Exception('No uploads playlist found');
+    return uploadsPlaylistId;
+  } catch (e) {
+    logger.e(e);
+    rethrow;
+  }
+}
+
+Future<List<Video>> getAllVideosOfPlaylists(Client client, String playlistId) async {
   if (playlistId.isEmpty) throw Exception('Playlist id cannot be empty');
   final ytApi = YouTubeApi(client);
   try {
@@ -162,34 +181,44 @@ Future<List<Video>> getVideosOfPlaylists(Client client, String playlistId) async
   }
 }
 
-Future<String> getUploadsPlaylistIdFromSubscription(Client client, Subscription subscription) async {
-  final subscriptionChannelId = subscription.snippet?.resourceId?.channelId;
-  if (subscriptionChannelId == null) throw Exception('No channel id found');
+Future<List<Video>> getnVideosFromPlaylist(Client client, String playlistId, {int maxResults = 50}) async {
+  final ytApi = YouTubeApi(client);
   try {
-    final ytApi = YouTubeApi(client);
-    final response = await ytApi.channels.list(
-      ['contentDetails'],
-      id: [subscriptionChannelId],
+    final playlistItems = await ytApi.playlistItems.list(
+      ['snippet', 'contentDetails'],
+      playlistId: playlistId,
+      maxResults: maxResults,
     );
-    final uploadsPlaylistId = response.items?.first.contentDetails?.relatedPlaylists?.uploads;
-    if (uploadsPlaylistId == null) throw Exception('No uploads playlist found');
-    return uploadsPlaylistId;
+    if (playlistItems.items?.isNotEmpty != true) throw Exception('No videos found');
+    return playlistItems.items!.map((e) => e.video).where((e) => e != null).toList().cast<Video>();
   } catch (e) {
     logger.e(e);
     rethrow;
   }
 }
 
-Future<List<Video>> get50VideosFromPlaylist(Client client, String playlistId) async {
+Future<PaginatedResponse<List<Video>>> getPaginatedVideosFromPlaylist(
+  Client client,
+  String playlistId, {
+  int? maxResults = 50,
+  String? pageToken,
+}) async {
   final ytApi = YouTubeApi(client);
   try {
-    final playlistItems = await ytApi.playlistItems.list(
+    final response = await ytApi.playlistItems.list(
       ['snippet', 'contentDetails'],
-      id: [playlistId],
-      maxResults: 50,
+      playlistId: playlistId,
+      maxResults: maxResults,
+      pageToken: pageToken,
     );
-    if (playlistItems.items?.isNotEmpty != true) throw Exception('No subscriptions found');
-    return playlistItems.items!.map((e) => e.video).where((e) => e != null).toList().cast<Video>();
+    logger.i(
+        'nextPageToken: ${response.nextPageToken}\nkind: ${response.kind}\npageInfo:\n\ttotal: ${response.pageInfo?.totalResults}\n\tper page: ${response.pageInfo?.resultsPerPage}');
+    if (response.items?.isNotEmpty != true) throw Exception('No videos found');
+    return PaginatedResponse(
+      nextPageToken: response.nextPageToken,
+      prefiousPageToken: response.prevPageToken,
+      data: response.items!.map((e) => e.video).where((e) => e != null).toList().cast<Video>(),
+    );
   } catch (e) {
     logger.e(e);
     rethrow;
