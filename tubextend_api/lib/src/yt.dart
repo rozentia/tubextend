@@ -1,10 +1,10 @@
 import 'package:googleapis/youtube/v3.dart';
-import 'package:http/http.dart';
 import 'package:tubextend_api/src/core/logger.dart';
 import 'package:tubextend_api/src/core/models.dart';
+import 'package:googleapis_auth/auth_io.dart';
 import './core/extensions.dart';
 
-Future<List<String>> getYTCategoriesAsChannelIds(Client client, {String? hl, String regionCode = 'US'}) async {
+Future<List<String>> getYTCategoriesAsChannelIds(AuthClient client, {String? hl, String regionCode = 'US'}) async {
   final ytApi = YouTubeApi(client);
   try {
     final categories = await ytApi.videoCategories.list(
@@ -20,7 +20,7 @@ Future<List<String>> getYTCategoriesAsChannelIds(Client client, {String? hl, Str
   }
 }
 
-Future<List<VideoCategory>> getYTCategories(Client client, {String? hl, String regionCode = 'US'}) async {
+Future<List<VideoCategory>> getYTCategories(AuthClient client, {String? hl, String regionCode = 'US'}) async {
   final ytApi = YouTubeApi(client);
   try {
     final categories = await ytApi.videoCategories.list(
@@ -37,7 +37,7 @@ Future<List<VideoCategory>> getYTCategories(Client client, {String? hl, String r
 }
 
 Future<List<Video>> getYTpopularVideosFromCategory(
-  Client client,
+  AuthClient client,
   String categoryId, {
   String? hl,
   String regionCode = 'US',
@@ -61,7 +61,7 @@ Future<List<Video>> getYTpopularVideosFromCategory(
   }
 }
 
-Future<List<Video>> searchForVideosByString(Client client, String query) async {
+Future<List<Video>> searchForVideosByString(AuthClient client, String query) async {
   final ytApi = YouTubeApi(client);
   try {
     final response = await ytApi.search.list(
@@ -93,7 +93,7 @@ Future<List<Video>> searchForVideosByString(Client client, String query) async {
   }
 }
 
-Future<List<Subscription>> getUserSubscriptions(Client client) async {
+Future<List<Subscription>> getUserSubscriptions(AuthClient client) async {
   final ytApi = YouTubeApi(client);
   try {
     final List<Subscription> subscriptions = [];
@@ -116,7 +116,7 @@ Future<List<Subscription>> getUserSubscriptions(Client client) async {
   }
 }
 
-Future<List<Playlist>> getUserPlaylists(Client client) async {
+Future<List<Playlist>> getUserPlaylists(AuthClient client) async {
   final ytApi = YouTubeApi(client);
   try {
     final List<Playlist> playlists = [];
@@ -139,7 +139,7 @@ Future<List<Playlist>> getUserPlaylists(Client client) async {
   }
 }
 
-Future<String> getUploadsPlaylistIdFromSubscription(Client client, Subscription subscription) async {
+Future<String> getUploadsPlaylistIdFromSubscription(AuthClient client, Subscription subscription) async {
   final subscriptionChannelId = subscription.snippet?.resourceId?.channelId;
   if (subscriptionChannelId == null) throw Exception('No channel id found');
   try {
@@ -157,7 +157,7 @@ Future<String> getUploadsPlaylistIdFromSubscription(Client client, Subscription 
   }
 }
 
-Future<List<Video>> getAllVideosOfPlaylists(Client client, String playlistId) async {
+Future<List<Video>> getAllVideosOfPlaylists(AuthClient client, String playlistId) async {
   if (playlistId.isEmpty) throw Exception('Playlist id cannot be empty');
   final ytApi = YouTubeApi(client);
   try {
@@ -181,7 +181,7 @@ Future<List<Video>> getAllVideosOfPlaylists(Client client, String playlistId) as
   }
 }
 
-Future<List<Video>> getnVideosFromPlaylist(Client client, String playlistId, {int maxResults = 50}) async {
+Future<List<Video>> getnVideosFromPlaylist(AuthClient client, String playlistId, {int maxResults = 50}) async {
   final ytApi = YouTubeApi(client);
   try {
     final playlistItems = await ytApi.playlistItems.list(
@@ -198,7 +198,7 @@ Future<List<Video>> getnVideosFromPlaylist(Client client, String playlistId, {in
 }
 
 Future<PaginatedResponse<List<Video>>> getPaginatedVideosFromPlaylist(
-  Client client,
+  AuthClient client,
   String playlistId, {
   int? maxResults = 50,
   String? pageToken,

@@ -15,7 +15,8 @@ dependencies:
   flutter:
     sdk: flutter
   googleapis: ^11.4.0
-  http: ^1.1.0
+  googleapis_auth: ^1.4.1
+  http: ^1.0.0
   logger: ^2.0.2+1
   youtube_explode_dart: ^2.0.2
 
@@ -25,7 +26,9 @@ dev_dependencies:
   flutter_lints: ^3.0.1
   flutter_test:
     sdk: flutter
-  googleapis_auth: ^1.4.1
   test: ^1.24.3
+
+dependency_overrides:
+  http: ^0.13.5
 
 flutter: null

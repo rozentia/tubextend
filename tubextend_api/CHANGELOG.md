@@ -18,3 +18,7 @@ Implemented YouTube functions:
 * get the uploads playlist Id of a given subscription
 * get up to x number of videos from a playlist
 * get videos from a playlist as paginated response
+
+## 0.0.3
+
+Fixed dependency conflict on http(0.13.5/1.0.0)

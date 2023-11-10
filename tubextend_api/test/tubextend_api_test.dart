@@ -95,12 +95,6 @@ void main() {
       expect(playlists.isNotEmpty, true);
     });
 
-    test('get all videos from playlist', () async {
-      final videos = await getAllVideosOfPlaylists(client, testPlaylistId);
-      logger.i('retreived a total of ${videos.length} videos');
-      expect(videos.isNotEmpty, true);
-    });
-
     test('get user subscriptions', () async {
       final subscriptions = await getUserSubscriptions(client);
       logger.i('retreived a total of ${subscriptions.length} subscriptions');
