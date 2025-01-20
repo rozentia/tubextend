@@ -1,0 +1,24 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+firebase-functions = "~=0.1.0"
+google-cloud-secret-manager = "*"
+requests = "*"
+google-api-python-client = "*"
+firebase-admin = "*"
+supabase = "*"
+yt-dlp = "*"
+openai = "*"
+python-dotenv = "*"
+google-cloud-storage = "*"
+pytest = "*"
+pytest-mock = "*"
+pydantic = {extras = ["email"], version = "*"}
+
+[dev-packages]
+
+[requires]
+python_version = "3.12"
