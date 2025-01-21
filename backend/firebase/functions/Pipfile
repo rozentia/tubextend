@@ -7,7 +7,6 @@ name = "pypi"
 firebase-functions = "~=0.1.0"
 google-cloud-secret-manager = "*"
 requests = "*"
-google-api-python-client = "*"
 firebase-admin = "*"
 supabase = "*"
 yt-dlp = "*"
@@ -17,8 +16,18 @@ google-cloud-storage = "*"
 pytest = "*"
 pytest-mock = "*"
 pydantic = {extras = ["email"], version = "*"}
+pytest-asyncio = "*"
+google-auth-oauthlib = "*"
+google-auth-httplib2 = "*"
+google-api-python-client = "*"
 
 [dev-packages]
 
 [requires]
 python_version = "3.12"
+
+[scripts]
+set_youtube_token = "python scripts/get_youtube_token.py"
+test_db = "pytest tests/test_database.py -v"
+test_youtube = "pytest tests/test_youtube_api.py -v"
+test_db_oauth = "pytest tests/test_database_oauth.py -v"

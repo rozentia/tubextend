@@ -1,4 +1,4 @@
-# **Table Documentation**
+# **Database Schema Documentation**
 
 1. **`users` Table:**
     * **Purpose:** This table stores the core user information, which is directly tied to their Firebase Authentication account.

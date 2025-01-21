@@ -15,6 +15,8 @@ class ConfigVars:
     supabase_service_key: str
     youtube_api_key: str
     openai_api_key: str
+    youtube_client_id: str
+    youtube_client_key: str
 
 class Config:
     """Configuration manager for both development and production environments"""
@@ -23,13 +25,15 @@ class Config:
     CONFIG_VARS = {
         'supabase_url': ('SUPABASE_URL', 'supabase.url'),
         'storage_bucketurl': ('STORAGE_BUCKETURL', 'storage.bucketurl'),
+        'youtube_client_id': ('YOUTUBE_CLIENT_ID', 'youtube.client.id'),
     }
     
     SECRET_KEYS = [
         'SUPABASE_ANON_KEY',
         'SUPABASE_SERVICE_KEY',
         'YOUTUBE_API_KEY',
-        'OPENAI_API_KEY'
+        'OPENAI_API_KEY',
+        'YOUTUBE_CLIENT_KEY'
     ]
 
     def __init__(self):
@@ -40,12 +44,14 @@ class Config:
         # Config variables
         self.supabase_url: str
         self.storage_bucketurl: str
+        self.youtube_client_id: str
         
         # Secret keys
         self.supabase_anon_key: str
         self.supabase_service_key: str
         self.youtube_api_key: str
         self.openai_api_key: str
+        self.youtube_client_key: str
         
         # Load the actual configuration
         self._load_environment()
@@ -88,7 +94,7 @@ class Config:
         config_dict['supabase_anon_key'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0'
         config_dict['supabase_service_key'] = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
 
-        print(f"Config dict: {config_dict}")
+        print(f">>>>>>  Config dict: {config_dict}")
         return ConfigVars(**config_dict)
 
     def _load_production_config(self) -> ConfigVars:

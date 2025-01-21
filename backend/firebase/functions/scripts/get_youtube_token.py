@@ -30,7 +30,20 @@ def get_refresh_token():
         scopes=['https://www.googleapis.com/auth/youtube.readonly']
     )
     
-    credentials = flow.run_local_server(port=8080)
+    # Set the parameters for offline access and force consent
+    flow.oauth2session.redirect_uri = 'http://localhost:8080'
+    
+    credentials = flow.run_local_server(
+        port=8080,
+        access_type='offline',
+        prompt='consent'
+    )
+    
+    print(f"Credentials:\nREFRESH TOKEN: {credentials.refresh_token}\nEXPIRY: {credentials.expiry}\nCREDENTIALS EXPIRY:{credentials.expiry}\n")
+    print(f"TOKEN: {credentials.token}")
+    if credentials.refresh_token == None:
+        credentials.refresh()
+        print(f"REFRESHED TOKEN: {credentials.refresh_token}")
     
     # Read existing content
     existing_content = ""
@@ -48,11 +61,6 @@ def get_refresh_token():
     # but we'll be conservative)
     expiry = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=7)
 
-    print(f"Credentials:\nREFRESH TOKEN: {credentials.refresh_token}\nEXPIRY: {expiry}\nCREDENTIALS EXPIRY:{credentials.expiry}\n")
-    print(f"TOKEN: {credentials.token}")
-    if credentials.refresh_token == None:
-        credentials.refresh()
-        print(f"REFRESHED TOKEN: {credentials.refresh_token}")
     for line in lines:
         if line.startswith('YOUTUBE_REAL_REFRESH_TOKEN='):
             new_lines.append(f'YOUTUBE_REAL_REFRESH_TOKEN="{credentials.refresh_token}"')

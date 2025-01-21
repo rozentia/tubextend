@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from utils.database import Database
 from models.user_info import UserInfo
 from models.channel_info import ChannelInfo
@@ -16,15 +16,26 @@ def seed_test_data():
     """Seed the test database with sample data for integration tests."""
     db = Database()
     
-    # Create test user
+    # Create test users
     test_user = UserInfo(
         id="test_user_123",
         email="test@example.com",
         display_name="Test User",
+        refresh_token="1//test_refresh_token_123",
+        token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
     db.insert_user(test_user)
+    
+    test_user_no_oauth = UserInfo(
+        id="test_user_no_oauth",
+        email="test_no_oauth@example.com",
+        display_name="Test User No OAuth",
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
+    )
+    db.insert_user(test_user_no_oauth)
     
     # Create test channels
     test_channels = [
@@ -43,8 +54,12 @@ def seed_test_data():
             created_at=datetime.now(timezone.utc)
         )
     ]
+    
+    inserted_channels = []
     for channel in test_channels:
-        db.insert_channel(channel)
+        inserted_channel = db.insert_channel(channel)
+        if inserted_channel:
+            inserted_channels.append(inserted_channel)
     
     # Create test source
     test_source = SourceInfo(
@@ -58,102 +73,73 @@ def seed_test_data():
         },
         created_at=datetime.now(timezone.utc)
     )
-    db.insert_source(test_source)
+    inserted_source = db.insert_source(test_source)
     
-    # Link channels to source
-    for channel in test_channels:
-        source_channel = SourceChannelInfo(
-            source_id=test_source.id,
-            youtube_channel_id=channel.youtube_channel_id
-        )
-        db.insert_source_channel(source_channel)
-    
-    # Create test videos
+    # Create and insert test videos
     test_videos = [
         VideoMetadata(
-            youtube_video_id="video123",
-            title="Test Video 1",
-            description="Test Video Description 1",
-            url="https://youtube.com/watch?v=video123",
-            channel_id=test_channels[0].youtube_channel_id,
-            uploaded_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc)
-        ),
-        VideoMetadata(
-            youtube_video_id="video456",
-            title="Test Video 2",
-            description="Test Video Description 2",
-            url="https://youtube.com/watch?v=video456",
-            channel_id=test_channels[1].youtube_channel_id,
-            uploaded_at=datetime.now(timezone.utc),
-            created_at=datetime.now(timezone.utc)
-        )
+            youtube_video_id=f"video{i}",
+            title=f"Test Video {i}",
+            description=f"Test Description {i}",
+            channel_id=inserted_channels[0].youtube_channel_id,
+            url=f"https://youtube.com/watch?v=video{i}",
+            uploaded_at=datetime.now(timezone.utc)
+        ) for i in range(1, 3)
     ]
-    db.bulk_insert_videos(test_videos)
-    
-    # Link videos to source
-    for video in test_videos:
-        source_video = SourceVideoInfo(
-            source_id=test_source.id,
-            youtube_video_id=video.youtube_video_id,
-            processed_at=None  # Not processed yet
-        )
-        db.insert_source_video(source_video)
-    
-    # Create test transcripts
+    inserted_videos = db.bulk_insert_videos(test_videos)
+
+    # Create test transcript
     test_transcript = Transcript(
-        id=uuid.UUID("98765432-9876-5432-9876-987654321098"),
-        youtube_video_id=test_videos[0].youtube_video_id,
-        text="This is a test transcript content.",
+        youtube_video_id=inserted_videos[0].youtube_video_id,
+        content="Test transcript content",
         source=TranscriptSource.YOUTUBE_CAPTION,
-        storage_url="gs://test-bucket/transcripts/video123.txt",
         created_at=datetime.now(timezone.utc)
     )
-    db.insert_transcript(test_transcript)
-    
+    inserted_transcript = db.insert_transcript(test_transcript)
+
     # Create test podcast
     test_podcast = PodcastMetadata(
-        id=uuid.UUID("11111111-2222-3333-4444-555555555555"),
+        id=uuid.UUID("98765432-9876-5432-9876-987654321098"),
         user_id=test_user.id,
-        source_id=test_source.id,
-        transcript_id=test_transcript.id,
-        storage_url="gs://test-bucket/podcasts/test_podcast.mp3",
+        source_id=inserted_source.id,
         title="Test Podcast",
+        storage_url="https://storage.example.com/test-podcast.mp3",
         created_at=datetime.now(timezone.utc)
     )
-    db.insert_podcast(test_podcast)
-    
-    # Link videos to podcast
-    podcast_video = PodcastVideoInfo(
-        podcast_id=test_podcast.id,
-        youtube_video_id=test_videos[0].youtube_video_id
-    )
-    db.insert_podcast_video(podcast_video)
-    
+    inserted_podcast = db.insert_podcast(test_podcast)
+
     # Create test generation job
     test_job = GenerationJob(
-        id=uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+        id=uuid.UUID("abcdef12-abcd-efab-abcd-abcdef123456"),
         user_id=test_user.id,
-        source_id=test_source.id,
+        source_id=inserted_source.id,
         status=JobStatus.QUEUED,
         config=JobConfig(
-            model_parameters={"temperature": 0.7},
-            processing_options={"format": "mp3"}
+            tts_voice="en-US-Neural2-F",
+            summarization_style="detailed"
         ),
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc)
     )
-    db.insert_generation_job(test_job)
+    inserted_job = db.insert_generation_job(test_job)
+
+    # Link test entities
+    db.link_channel_to_source(inserted_source.id, inserted_channels[0].youtube_channel_id)
+    db.link_video_to_source(inserted_source.id, inserted_videos[0].youtube_video_id)
     
-    return {
+    # Create test data dictionary with all created entities
+    test_data = {
         "user": test_user,
-        "channels": test_channels,
-        "source": test_source,
-        "videos": test_videos,
-        "transcript": test_transcript,
-        "podcast": test_podcast,
-        "job": test_job
+        "user_no_oauth": test_user_no_oauth,
+        "channels": inserted_channels,
+        "source": inserted_source,
+        "videos": inserted_videos,
+        "transcript": inserted_transcript,
+        "podcast": inserted_podcast,
+        "job": inserted_job
     }
+    
+    return test_data
 
 if __name__ == "__main__":
     seed_test_data() 

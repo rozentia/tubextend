@@ -12,7 +12,7 @@ from models.transcript import Transcript
 from models.podcast_metadata import PodcastMetadata
 from models.podcast_video_info import PodcastVideoInfo
 from models.generation_job import GenerationJob
-from typing import List, Optional, Dict, Any, Set, NewType, Literal, TypeVar, Callable, ParamSpec, Tuple, Union
+from typing import List, Optional, Dict, Any, Set, NewType, TypeVar, Callable, ParamSpec, Tuple, Union
 import uuid
 from datetime import datetime, timezone, timedelta
 from enum import Enum
@@ -20,9 +20,6 @@ from pydantic import BaseModel
 from functools import lru_cache, wraps
 import time
 from dataclasses import dataclass
-import hashlib
-import json
-
 
 logger = setup_logger(__name__)
 
@@ -405,6 +402,36 @@ class Database:
         except Exception as e:
             logger.error(f"Error updating user: {str(e)}")
             raise DatabaseError(f"Error updating user: {str(e)}")
+
+    def update_user_token(self, user_id: str, refresh_token: str, expires_at: datetime) -> Optional[UserInfo]:
+        """
+        Update user's OAuth token information.
+
+        Args:
+            user_id (str): The Firebase UID of the user
+            refresh_token (str): The new refresh token
+            expires_at (datetime): Token expiration timestamp
+
+        Returns:
+            Optional[UserInfo]: Updated user info or None if update failed
+        """
+        try:
+            updated_data = {
+                'refresh_token': refresh_token,
+                'token_expires_at': expires_at,
+                'updated_at': datetime.now()
+            }
+            serialized_data = self._serialize_update_data(updated_data)
+
+            result = self.client.table('users').update(serialized_data).eq('id', user_id).execute()
+            
+            if result.data:
+                return UserInfo.model_validate(result.data[0])
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error updating user token: {e}")
+            return None
 
     #- Channel Operations
     @_monitor_query
