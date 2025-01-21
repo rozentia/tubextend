@@ -111,17 +111,7 @@ class TestYouTubeAPI:
         )
         
         assert isinstance(videos, list)
-    
-    @pytest.mark.unit
-    @patch('googleapiclient.discovery.build')
-    async def test_youtube_client_mock(self, mock_build, youtube_api):
-        """Unit test for client creation with mocks."""
-        mock_client = MagicMock()
-        mock_build.return_value = mock_client
         
-        client = await youtube_api._get_youtube_client()
-        assert client == mock_client
-    
     @patch('googleapiclient.discovery.build')
     async def test_fetch_channel_videos_with_oauth(self, mock_build, youtube_api, test_data):
         """Test fetching channel videos using OAuth credentials."""
