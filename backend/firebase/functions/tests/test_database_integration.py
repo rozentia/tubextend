@@ -254,11 +254,14 @@ class TestDatabaseIntegration:
             ) for i in range(3)
         ]
         inserted_channels = db.bulk_insert_channels(new_channels)
-        assert len(inserted_channels) == len(new_channels)
+        assert len(inserted_channels) == len(new_channels), \
+            f"Expected {len(new_channels)} channels to be inserted, got {len(inserted_channels)}"
         
-        # Get initial count of processed videos
+        # Get initial count of processed videos (there is 1 because of the test data)
         initial_processed = db.get_processed_videos(test_data["source"].id)
-        initial_count = len(initial_processed)
+        assert len(initial_processed) == 1, \
+            f"Expected 1 processed videos, got {len(initial_processed)}"
+        initial_count = len(initial_processed) - 1 #! Subtract the test data video
         
         # Test bulk update source videos
         videos_to_update = [
@@ -269,7 +272,7 @@ class TestDatabaseIntegration:
         # First, ensure videos are linked to source
         for source_id, video_id in videos_to_update:
             db.link_video_to_source(source_id, video_id)
-        
+
         # Then mark them as processed
         processed_time = datetime.now(timezone.utc)
         db.bulk_mark_videos_processed(videos_to_update, processed_time)
