@@ -289,6 +289,10 @@ class TestChannelMonitorAgentIntegration:
             existing_sources = channel_monitor.database.get_sources_by_user(test_data["user"].id)
             for existing_source in existing_sources:
                 # Clean up related data
+                channel_monitor.database.client.table('generation_jobs')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
                 channel_monitor.database.client.table('podcasts')\
                     .delete()\
                     .eq('source_id', str(existing_source.id))\
@@ -327,6 +331,8 @@ class TestChannelMonitorAgentIntegration:
 
             # Run the monitor
             jobs = await channel_monitor.run(test_data["user"].id)
+            print(f">>>>>>> Jobs: {len(jobs)}")
+            for job in jobs: print(job)
             assert not jobs, "Jobs were created for empty source"
             
         finally:

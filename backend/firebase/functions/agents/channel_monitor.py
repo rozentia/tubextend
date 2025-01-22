@@ -30,15 +30,9 @@ class ChannelMonitorAgent:
         self._last_request_time = time.time()
         self._progress: Dict[str, Dict] = defaultdict(lambda: {"total": 0, "processed": 0})
 
-    def _update_progress(self, source_id: str, total: Optional[int] = None, processed: Optional[int] = None):
+    def _update_progress(self, source_id: str):
         """Update progress tracking for a source."""
-        if total is not None:
-            self._progress[str(source_id)]["total"] = total
-        if processed is not None:
-            self._progress[str(source_id)]["processed"] = processed
-        
-        # Log progress
-        progress = self._progress[str(source_id)]
+        progress = self._progress[source_id]
         if progress["total"] > 0:
             percentage = (progress["processed"] / progress["total"]) * 100
             logger.info(f"Progress for source {source_id}: {percentage:.2f}% ({progress['processed']}/{progress['total']})")
@@ -100,12 +94,17 @@ class ChannelMonitorAgent:
                 if not source_channels:
                     logger.info(f"Skipping empty channel collection source: {source.name} (ID: {source.id})")
                     continue
+                
+                # Initialize progress tracking for this source
+                self._progress[str(source.id)] = {"total": len(source_channels), "processed": 0}
                 await self._process_channel_collection(user, source, jobs)
                 
             elif source.source_type == SourceType.PLAYLIST:
                 if not source.youtube_playlist_id:
                     logger.warning(f"Skipping playlist source without playlist ID: {source.name} (ID: {source.id})")
                     continue
+                # Initialize progress tracking for playlist
+                self._progress[str(source.id)] = {"total": 1, "processed": 0}
                 await self._process_playlist(user, source, jobs)
 
         logger.info(f"Channel monitoring finished, {len(jobs)} jobs were generated.")
@@ -119,11 +118,14 @@ class ChannelMonitorAgent:
             return
 
         all_new_videos = []
-        for channel in source_channels:
+        for i, channel in enumerate(source_channels):
             try:
                 videos = await self.youtube_api.fetch_channel_videos(channel.youtube_channel_id)
                 if videos:
                     all_new_videos.extend(videos)
+                # Update progress after each channel is processed
+                self._progress[str(source.id)]["processed"] = i + 1
+                self._update_progress(str(source.id))
             except Exception as e:
                 logger.error(f"Error fetching videos for channel {channel.youtube_channel_id}: {e}")
                 continue
@@ -141,6 +143,9 @@ class ChannelMonitorAgent:
             videos = await self.youtube_api.fetch_playlist_videos(source.youtube_playlist_id)
             if videos:
                 await self._process_new_videos(user, source, videos, jobs)
+            # Update progress for playlist processing
+            self._progress[str(source.id)]["processed"] = 1
+            self._update_progress(str(source.id))
         except Exception as e:
             logger.error(f"Error fetching videos for playlist {source.youtube_playlist_id}: {e}")
 
