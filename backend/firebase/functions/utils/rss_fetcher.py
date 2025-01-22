@@ -1,3 +1,4 @@
+import asyncio
 import aiohttp
 import feedparser
 from datetime import datetime
@@ -5,6 +6,7 @@ import pytz
 from typing import List, Optional
 from models.video_metadata import VideoMetadata
 from utils.logger import setup_logger
+from models.channel_info import ChannelInfo
 
 logger = setup_logger(__name__)
 
@@ -20,9 +22,10 @@ class YouTubeRSSFetcher:
         self._session_owner = session is None  # Track if we created the session
     
     async def _ensure_session(self):
-        """Ensures an aiohttp session exists."""
+        """Ensures an aiohttp session exists with proper timeout configuration."""
         if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
+            timeout = aiohttp.ClientTimeout(total=10)  # 10 seconds total timeout
+            self.session = aiohttp.ClientSession(timeout=timeout)
             self._session_owner = True
     
     async def close(self):
@@ -32,13 +35,16 @@ class YouTubeRSSFetcher:
     
     async def fetch_feed(self, url: str) -> Optional[str]:
         """Fetches RSS feed content from URL."""
+        await self._ensure_session()
         try:
-            await self._ensure_session()
             async with self.session.get(url) as response:
                 if response.status == 200:
                     return await response.text()
                 logger.error(f"Failed to fetch RSS feed. Status: {response.status}")
                 return None
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while fetching RSS feed from {url}")
+            return None
         except Exception as e:
             logger.error(f"Error fetching RSS feed: {e}")
             return None
@@ -76,15 +82,7 @@ class YouTubeRSSFetcher:
             return None
     
     async def fetch_channel_videos(self, channel_id: str, max_videos: int = 15) -> List[VideoMetadata]:
-        """Fetches latest videos from a channel using RSS feed.
-        
-        Args:
-            channel_id: YouTube channel ID
-            max_videos: Maximum number of videos to fetch (RSS usually provides 15)
-            
-        Returns:
-            List of VideoMetadata objects
-        """
+        """Fetches latest videos from a channel using RSS feed."""
         feed_url = self.CHANNEL_FEED_URL.format(channel_id)
         feed_content = await self.fetch_feed(feed_url)
         
@@ -102,15 +100,7 @@ class YouTubeRSSFetcher:
         return videos
     
     async def fetch_playlist_videos(self, playlist_id: str, max_videos: int = 15) -> List[VideoMetadata]:
-        """Fetches latest videos from a playlist using RSS feed.
-        
-        Args:
-            playlist_id: YouTube playlist ID
-            max_videos: Maximum number of videos to fetch (RSS usually provides 15)
-            
-        Returns:
-            List of VideoMetadata objects
-        """
+        """Fetches latest videos from a playlist using RSS feed."""
         feed_url = self.PLAYLIST_FEED_URL.format(playlist_id)
         feed_content = await self.fetch_feed(feed_url)
         
@@ -125,4 +115,28 @@ class YouTubeRSSFetcher:
             if video:
                 videos.append(video)
         
-        return videos 
+        return videos
+    
+    async def fetch_channel_info(self, channel_id: str) -> Optional[ChannelInfo]:
+        """Fetches channel information from YouTube RSS feed."""
+        feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}"
+        
+        try:
+            feed_content = await self.fetch_feed(feed_url)
+            if not feed_content:
+                return None
+            
+            feed = feedparser.parse(feed_content).feed
+            
+            if feed.author and feed.title:
+                return ChannelInfo(
+                    youtube_channel_id=channel_id,
+                    title=feed.title.replace("- YouTube", "").strip(),
+                    description=feed.author,
+                    channel_url=f"https://www.youtube.com/channel/{channel_id}"
+                )
+            return None
+                
+        except Exception as e:
+            logger.error(f"Error fetching RSS feed for channel: {channel_id} - {e}")
+            return None 
