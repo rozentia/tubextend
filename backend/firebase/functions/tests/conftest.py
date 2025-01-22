@@ -107,4 +107,13 @@ def youtube_api(database, aiohttp_session):
 @pytest.fixture(scope="session")
 def channel_monitor(database, youtube_api):
     """Create ChannelMonitorAgent instance for the session."""
-    return ChannelMonitorAgent(database=database, youtube_api=youtube_api) 
+    return ChannelMonitorAgent(database=database, youtube_api=youtube_api)
+
+@pytest.fixture
+async def setup_test_playlists(youtube_api):
+    """Setup test playlist data."""
+    test_playlist_ids = [
+        "PL5S4mPUpp4OvUOPxqoJsCHiC7jV9E5cak",  # Add actual test playlist IDs here
+        "PLp9pLaqAQbY0pKh2F48IurGCBXUB36LSG"
+    ]
+    return test_playlist_ids 
