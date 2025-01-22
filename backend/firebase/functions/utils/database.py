@@ -595,7 +595,7 @@ class Database:
         """Insert a new source channel."""
         logger.info(f"Inserting source channel in DB: {source_channel}")
         try:
-            response = self.client.table('source_channels').insert(source_channel.model_dump()).execute()
+            response = self.client.table('source_channels').insert(self._serialize_model(source_channel)).execute()
             return SourceChannelInfo(**response.data[0])
         except Exception as e:
             logger.error(f"Error inserting source channel: {str(e)}")
@@ -643,9 +643,9 @@ class Database:
 
     def insert_video(self, video: VideoMetadata) -> Optional[VideoMetadata]:
         """Insert a new video."""
-        logger.info(f"Inserting video in DB: {video}")
+        logger.info(f"Inserting video in DB: {video.title} ({video.youtube_video_id})")
         try:
-            response = self.client.table('videos').insert(video.model_dump()).execute()
+            response = self.client.table('videos').insert(self._serialize_model(video)).execute()
             return VideoMetadata(**response.data[0])
         except Exception as e:
             logger.error(f"Error inserting video: {str(e)}")
@@ -696,11 +696,22 @@ class Database:
         """Insert a new source video."""
         logger.info(f"Inserting source video in DB: {source_video}")
         try:
-            response = self.client.table('source_videos').insert(source_video.model_dump()).execute()
+            response = self.client.table('source_videos').insert(self._serialize_model(source_video)).execute()
             return SourceVideoInfo(**response.data[0])
         except Exception as e:
             logger.error(f"Error inserting source video: {str(e)}")
             return None
+    
+    def bulk_insert_source_videos(self, source_videos: List[SourceVideoInfo]) -> List[SourceVideoInfo]:
+        """Bulk insert multiple source videos."""
+        logger.info(f"Bulk inserting {len(source_videos)} source videos")
+        try:
+            source_video_data = [self._serialize_model(v) for v in source_videos]
+            response = self.client.table('source_videos').upsert(source_video_data).execute()
+            return [SourceVideoInfo(**item) for item in response.data]
+        except Exception as e:
+            logger.error(f"Error bulk inserting source videos: {str(e)}")
+            return []
 
     def get_source_videos_by_source(self, source_id:uuid.UUID) -> List[SourceVideoInfo]:
         logger.info(f"Fetching source videos for source ID: {source_id}")
@@ -775,7 +786,7 @@ class Database:
         try:
             update_data = {'processed_at': processed_at}
             response = self.client.table('source_videos')\
-                .update(update_data)\
+                .update(self._serialize_update_data(update_data))\
                 .eq('source_id', source_id)\
                 .in_('youtube_video_id', video_ids)\
                 .execute()
@@ -831,13 +842,23 @@ class Database:
         except Exception as e:
             logger.error(f"Error inserting podcast: {str(e)}")
             return None
+    
+    def delete_podcast(self, podcast_id: uuid.UUID) -> bool:
+        """Delete a podcast."""
+        logger.info(f"Deleting podcast with id: {podcast_id}")
+        try:
+            self.client.table('podcasts').delete().eq('id', podcast_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting podcast: {str(e)}")
+            return False
 
     #- PodcastVideo Operations
     def insert_podcast_video(self, podcast_video: PodcastVideoInfo) -> Optional[PodcastVideoInfo]:
         """Insert a new podcast video relation."""
         logger.info(f"Inserting podcast video relation in DB: {podcast_video}")
         try:
-            response = self.client.table('podcast_videos').insert(podcast_video.model_dump()).execute()
+            response = self.client.table('podcast_videos').insert(self._serialize_model(podcast_video)).execute()
             return PodcastVideoInfo(**response.data[0])
         except Exception as e:
             logger.error(f"Error inserting podcast video relation: {str(e)}")
@@ -852,6 +873,16 @@ class Database:
         except Exception as e:
             logger.error(f"Error fetching podcast videos for podcast id: {podcast_id}")
             return []
+    
+    def delete_podcast_videos_by_podcast(self, podcast_id: uuid.UUID) -> bool:
+        """Delete all podcast videos for a podcast."""
+        logger.info(f"Deleting podcast videos for podcast id: {podcast_id}")
+        try:
+            self.client.table('podcast_videos').delete().eq('podcast_id', podcast_id).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting podcast videos: {str(e)}")
+            return False
 
     #- GenerationJob Operations
     def get_generation_job(self, job_id: uuid.UUID) -> Optional[GenerationJob]:

@@ -4,6 +4,9 @@ from tests.cleanup_test_data import cleanup_test_data
 from utils.database import Database
 from unittest.mock import patch
 import os
+import aiohttp
+from utils.api_wrappers import YouTubeAPI
+from agents.channel_monitor import ChannelMonitorAgent
 
 @pytest.fixture(scope="session")
 def db():
@@ -74,4 +77,34 @@ def setup_test_env():
         if value is not None:
             os.environ[key] = value
         else:
-            os.environ.pop(key, None) 
+            os.environ.pop(key, None)
+
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    import asyncio
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
+@pytest.fixture(scope="session")
+async def aiohttp_session():
+    """Create a shared aiohttp session."""
+    session = aiohttp.ClientSession()
+    yield session
+    await session.close()
+
+@pytest.fixture(scope="session")
+def database():
+    """Create Database instance for the session."""
+    return Database()
+
+@pytest.fixture(scope="session")
+def youtube_api(database, aiohttp_session):
+    """Create YouTubeAPI instance for the session."""
+    return YouTubeAPI(database=database, session=aiohttp_session)
+
+@pytest.fixture(scope="session")
+def channel_monitor(database, youtube_api):
+    """Create ChannelMonitorAgent instance for the session."""
+    return ChannelMonitorAgent(database=database, youtube_api=youtube_api) 

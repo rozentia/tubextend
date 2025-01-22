@@ -1,8 +1,10 @@
 import pytest
-from unittest.mock import Mock, AsyncMock, patch, call
 from datetime import datetime, timezone
 import uuid
 import asyncio
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 
 from agents.channel_monitor import ChannelMonitorAgent
 from models.user_info import UserInfo
@@ -14,315 +16,358 @@ from models.source_video_info import SourceVideoInfo
 from models.generation_job import GenerationJob, JobStatus
 from utils.database import Database
 from utils.api_wrappers import YouTubeAPI
+from tests.seed_test_data import seed_test_data
+from tests.cleanup_test_data import cleanup_test_data
+from utils.rss_fetcher import YouTubeRSSFetcher
 
-# Test Data Fixtures
-@pytest.fixture
-def mock_database():
-    return Mock(spec=Database)
+# Load test environment variables
+test_env_path = Path(__file__).parent.parent / 'test.env'
+if test_env_path.exists():
+    load_dotenv(test_env_path)
 
-@pytest.fixture
-def mock_youtube_api():
-    return Mock(spec=YouTubeAPI)
+pytestmark = pytest.mark.asyncio
 
-@pytest.fixture
-def channel_monitor(mock_database, mock_youtube_api):
-    return ChannelMonitorAgent(database=mock_database, youtube_api=mock_youtube_api)
+@pytest.fixture(scope="session")
+def test_data():
+    """Fixture to seed and return test data once per test session."""
+    return seed_test_data()
 
-@pytest.fixture
-def test_user():
-    return UserInfo(
-        id="test_user_id",
-        email="test@example.com",
-        display_name="Test User",
-        created_at=datetime.now(timezone.utc)
-    )
+@pytest.fixture(scope="session", autouse=True)
+def cleanup(request):
+    """Cleanup fixture that runs once after all tests."""
+    yield
+    cleanup_test_data()
 
-@pytest.fixture
-def test_channel():
-    return ChannelInfo(
-        youtube_channel_id="test_channel_id",
-        title="Test Channel",
-        description="Test Channel Description",
-        channel_url="https://youtube.com/c/test_channel",
-        created_at=datetime.now(timezone.utc)
-    )
+@pytest.fixture(scope="session")
+async def database():
+    """Create database connection for the session."""
+    db = Database()
+    yield db
 
-@pytest.fixture
-def test_source():
-    return SourceInfo(
-        id=uuid.uuid4(),
-        user_id="test_user_id",
-        source_type=SourceType.CHANNEL_COLLECTION,
-        name="Test Source",
-        created_at=datetime.now(timezone.utc)
-    )
+@pytest.fixture(scope="session")
+async def rss_fetcher():
+    """Create YouTubeRSSFetcher instance for the session."""
+    fetcher = YouTubeRSSFetcher()
+    yield fetcher
+    await fetcher.close()
 
-@pytest.fixture
-def test_video():
-    return VideoMetadata(
-        youtube_video_id="test_video_id",
-        title="Test Video",
-        description="Test Video Description",
-        url="https://youtube.com/watch?v=test_video_id",
-        channel_id="test_channel_id",
-        uploaded_at=datetime.now(timezone.utc)
-    )
+@pytest.fixture(scope="session")
+async def youtube_api(database, rss_fetcher):
+    """Create YouTubeAPI instance for the session."""
+    api = YouTubeAPI(database=database)
+    api.rss_fetcher = rss_fetcher
+    return api
 
-# Main Functionality Tests
-@pytest.mark.asyncio
-async def test_run_with_no_user(channel_monitor, mock_database):
-    """Test run method when user doesn't exist."""
-    mock_database.get_user.return_value = None
-    
-    result = await channel_monitor.run("nonexistent_user_id")
-    
-    assert result == []
-    mock_database.get_user.assert_called_once_with(user_id="nonexistent_user_id")
+@pytest.fixture(scope="session")
+async def channel_monitor(database, youtube_api):
+    """Create ChannelMonitorAgent instance for the session."""
+    return ChannelMonitorAgent(database=database, youtube_api=youtube_api)
 
-@pytest.mark.asyncio
-async def test_run_with_no_sources(channel_monitor, mock_database, test_user):
-    """Test run method when user has no sources."""
-    mock_database.get_user.return_value = test_user
-    mock_database.get_sources_by_user.return_value = []
-    
-    result = await channel_monitor.run(test_user.id)
-    
-    assert result == []
-    mock_database.get_user.assert_called_once_with(user_id=test_user.id)
-    mock_database.get_sources_by_user.assert_called_once_with(user_id=test_user.id)
-
-@pytest.mark.asyncio
-async def test_run_with_channel_collection(
-    channel_monitor, mock_database, mock_youtube_api,
-    test_user, test_source, test_channel, test_video
-):
-    """Test successful processing of a channel collection source."""
-    # Setup mocks
-    mock_database.get_user.return_value = test_user
-    mock_database.get_sources_by_user.return_value = [test_source]
-    mock_database.get_source_channels_by_source.return_value = [
-        SourceChannelInfo(source_id=test_source.id, youtube_channel_id=test_channel.youtube_channel_id)
+@pytest.fixture(scope="session")
+def test_channel_ids():
+    """Get test channel IDs from environment."""
+    channels = [
+        os.getenv('TEST_CHANNEL_ID_1'),
+        os.getenv('TEST_CHANNEL_ID_2'),
+        os.getenv('TEST_CHANNEL_ID_3')
     ]
-    mock_database.get_channel.return_value = test_channel
-    mock_youtube_api.fetch_channel_videos = AsyncMock(return_value=[test_video])
-    mock_database.get_video.return_value = None
-    mock_database.insert_video.return_value = test_video
-    mock_database.insert_generation_job.return_value = GenerationJob(
-        id=uuid.uuid4(),
-        user_id=test_user.id,
-        source_id=test_source.id,
-        status=JobStatus.QUEUED,
-        created_at=datetime.now(timezone.utc)
-    )
-    
-    # Run test
-    result = await channel_monitor.run(test_user.id)
-    
-    # Verify results
-    assert len(result) == 1
-    assert isinstance(result[0], GenerationJob)
-    assert result[0].user_id == test_user.id
-    assert result[0].source_id == test_source.id
-    assert result[0].status == JobStatus.QUEUED
+    assert all(channels), "All TEST_CHANNEL_ID_* environment variables must be set"
+    assert all(c.startswith('UC') for c in channels), "All channel IDs must start with 'UC'"
+    return channels
 
-@pytest.mark.asyncio
-async def test_run_with_playlist(
-    channel_monitor, mock_database, mock_youtube_api,
-    test_user, test_video
-):
-    """Test successful processing of a playlist source."""
-    # Create playlist source
-    playlist_source = SourceInfo(
-        id=uuid.uuid4(),
-        user_id=test_user.id,
-        source_type=SourceType.PLAYLIST,
-        name="Test Playlist",
-        youtube_playlist_id="test_playlist_id",
-        created_at=datetime.now(timezone.utc)
-    )
-    
-    # Setup mocks
-    mock_database.get_user.return_value = test_user
-    mock_database.get_sources_by_user.return_value = [playlist_source]
-    mock_youtube_api.fetch_playlist_videos = AsyncMock(return_value=[test_video])
-    mock_database.get_video.return_value = None
-    mock_database.insert_video.return_value = test_video
-    mock_database.insert_generation_job.return_value = GenerationJob(
-        id=uuid.uuid4(),
-        user_id=test_user.id,
-        source_id=playlist_source.id,
-        status=JobStatus.QUEUED,
-        created_at=datetime.now(timezone.utc)
-    )
-    
-    # Run test
-    result = await channel_monitor.run(test_user.id)
-    
-    # Verify results
-    assert len(result) == 1
-    assert isinstance(result[0], GenerationJob)
-    assert result[0].user_id == test_user.id
-    assert result[0].source_id == playlist_source.id
-    assert result[0].status == JobStatus.QUEUED
+@pytest.fixture
+def test_playlist_ids():
+    """Get test playlist IDs from environment."""
+    playlists = [
+        os.getenv('TEST_PLAYLIST_ID_1'),
+        os.getenv('TEST_PLAYLIST_ID_2'),
+        os.getenv('TEST_PLAYLIST_ID_3')
+    ]
+    assert all(playlists), "All TEST_PLAYLIST_ID_* environment variables must be set"
+    assert all(p.startswith('PL') for p in playlists), "All playlist IDs must start with 'PL'"
+    return playlists
 
-# Rate Limiting Tests
-@pytest.mark.asyncio
-async def test_rate_limiting(channel_monitor):
-    """Test that rate limiting works correctly."""
-    # Set a very low rate limit for testing
-    channel_monitor.rate_limit = 2
-    channel_monitor._request_count = 0
-    
-    # First request should go through immediately
-    await channel_monitor._check_rate_limit()
-    assert channel_monitor._request_count == 1
-    
-    # Second request should go through
-    await channel_monitor._check_rate_limit()
-    assert channel_monitor._request_count == 2
-    
-    # Third request should trigger waiting
-    with patch('asyncio.sleep', AsyncMock()) as mock_sleep:
-        await channel_monitor._check_rate_limit()
-        mock_sleep.assert_called_once()
+class TestChannelMonitorAgentIntegration:
+    """Integration tests for ChannelMonitorAgent."""
 
-# Batch Processing Tests
-@pytest.mark.asyncio
-async def test_batch_processing(
-    channel_monitor, mock_database, test_source, test_video
-):
-    """Test that videos are processed in correct batch sizes."""
-    # Create a list of test videos
-    test_videos = [
-        VideoMetadata(
-            youtube_video_id=f"video_{i}",
-            title=f"Video {i}",
-            channel_id="test_channel",
+    async def _ensure_channels_exist(self, youtube_api, channel_ids):
+        """Helper method to ensure channels exist in database before testing."""
+        for channel_id in channel_ids:
+            # Check if channel exists
+            channel = youtube_api.database.get_channel(channel_id)
+            if not channel:
+                # Fetch and insert channel info if it doesn't exist
+                channel_info = await youtube_api.fetch_channel_info(channel_id)
+                if channel_info:
+                    try:
+                        youtube_api.database.insert_channel(channel_info)
+                    except Exception as e:
+                        print(f"Error inserting channel {channel_id}: {str(e)}")
+                        raise
+                else:
+                    raise ValueError(f"Could not fetch info for channel {channel_id}")
+            
+            # Verify channel was inserted
+            channel = youtube_api.database.get_channel(channel_id)
+            if not channel:
+                raise ValueError(f"Channel {channel_id} was not properly inserted")
+
+    @pytest.fixture(scope="class")
+    async def setup_test_channels(self, youtube_api, test_channel_ids):
+        """Fixture to ensure test channels exist in database."""
+        await self._ensure_channels_exist(youtube_api, test_channel_ids)
+        return test_channel_ids
+
+    @pytest.mark.integration
+    async def test_run_with_channel_collection(self, channel_monitor, test_data, setup_test_channels):
+        """Test monitoring a channel collection with real channels."""
+        test_channel_ids = setup_test_channels
+        
+        # Create a new channel collection source for the test user
+        source = SourceInfo(
+            id=uuid.uuid4(),
+            user_id=test_data["user"].id,
+            source_type=SourceType.CHANNEL_COLLECTION,
+            name="Test Channel Collection",
             created_at=datetime.now(timezone.utc)
         )
-        for i in range(120)  # Create more videos than batch size
-    ]
-    
-    # Set a smaller batch size for testing
-    channel_monitor.batch_size = 50
-    
-    # Process videos
-    result = await channel_monitor._process_videos_batch(test_videos)
-    
-    # Verify that database was called with correct batch sizes
-    assert mock_database.get_video.call_count <= len(test_videos)
-    assert len(result) <= len(test_videos)
+        channel_monitor.database.insert_source(source)
+        
+        # Add test channels to the collection
+        for channel_id in test_channel_ids:
+            source_channel = SourceChannelInfo(
+                source_id=source.id,
+                youtube_channel_id=channel_id
+            )
+            channel_monitor.database.insert_source_channel(source_channel)
+        
+        # Run the monitor
+        jobs = await channel_monitor.run(test_data["user"].id)
+        
+        # Verify jobs were created
+        assert jobs, "No jobs were created"
+        assert all(isinstance(job, GenerationJob) for job in jobs)
+        
+        for job in jobs:
+            assert job.user_id == test_data["user"].id
+            assert job.source_id == source.id
+            assert job.status == JobStatus.QUEUED
+        
+        # Verify videos were stored
+        source_videos = channel_monitor.database.get_source_videos_by_source(source.id)
+        assert source_videos, "No videos were stored for the source"
 
-# Error Handling Tests
-@pytest.mark.asyncio
-async def test_quota_exceeded_handling(
-    channel_monitor, mock_youtube_api, test_channel
-):
-    """Test handling of YouTube API quota exceeded error."""
-    mock_youtube_api.fetch_channel_videos = AsyncMock(
-        side_effect=Exception("quota exceeded")
-    )
-    
-    with patch('asyncio.sleep', AsyncMock()) as mock_sleep:
-        result = await channel_monitor._fetch_new_videos_from_channel(
-            channel=test_channel,
-            user_id="test_user"
+    @pytest.mark.integration
+    async def test_run_with_playlist(self, channel_monitor, test_data, test_playlist_ids):
+        """Test monitoring a playlist with real playlist."""
+        # First clean up any existing sources for this user
+        try:
+            existing_sources = channel_monitor.database.get_sources_by_user(test_data["user"].id)
+            print(f">>>>>>> Existing sources: {len(existing_sources)}")
+            # Clean up each source and its related data
+            for existing_source in existing_sources:
+                channel_monitor.database.client.table('podcasts')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('source_videos')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('source_channels')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('sources')\
+                    .delete()\
+                    .eq('id', str(existing_source.id))\
+                    .execute()
+        except Exception as e:
+            print(f"Error cleaning up existing data: {str(e)}")
+        
+        # Create a new playlist source
+        source = SourceInfo(
+            id=uuid.uuid4(),
+            user_id=test_data["user"].id,
+            source_type=SourceType.PLAYLIST,
+            name="Test Playlist Source",
+            youtube_playlist_id=test_playlist_ids[0],
+            created_at=datetime.now(timezone.utc)
         )
         
-        assert result == []
-        assert mock_sleep.called
+        try:
+            # Insert the new source
+            channel_monitor.database.insert_source(source)
+            
+            # Run the monitor
+            jobs = await channel_monitor.run(test_data["user"].id)
+            
+            # Verify results
+            assert jobs, "No jobs were created"
+            assert len(jobs) == 1, f"Expected 1 job, found {len(jobs)}"
+            assert jobs[0].user_id == test_data["user"].id
+            assert jobs[0].source_id == source.id
+            assert jobs[0].status == JobStatus.QUEUED
+            
+            # Verify videos were stored
+            source_videos = channel_monitor.database.get_source_videos_by_source(source.id)
+            assert source_videos, "No videos were stored for the source"
+            
+        finally:
+            # Clean up test data
+            try:
+                channel_monitor.database.client.table('source_videos')\
+                    .delete()\
+                    .eq('source_id', str(source.id))\
+                    .execute()
+                channel_monitor.database.client.table('sources')\
+                    .delete()\
+                    .eq('id', str(source.id))\
+                    .execute()
+            except Exception as e:
+                print(f"Error cleaning up test data: {str(e)}")
 
-@pytest.mark.asyncio
-async def test_channel_not_found_handling(
-    channel_monitor, mock_database, test_source, test_user
-):
-    """Test handling of non-existent channel."""
-    source_channel = SourceChannelInfo(
-        source_id=test_source.id,
-        youtube_channel_id="nonexistent_channel"
-    )
-    
-    mock_database.get_source_channels_by_source.return_value = [source_channel]
-    mock_database.get_channel.return_value = None
-    
-    # This should log a warning but not raise an exception
-    await channel_monitor._process_channel_collection(
-        user=test_user,
-        source=test_source,
-        jobs=[]
-    )
-    
-    mock_database.get_channel.assert_called_once_with(
-        youtube_channel_id="nonexistent_channel"
-    )
+    @pytest.mark.integration
+    async def test_duplicate_video_handling(self, channel_monitor, test_data, setup_test_channels):
+        """Test handling of duplicate videos with real data."""
+        test_channel_ids = setup_test_channels
+        
+        test_data = test_data
+        
+        # Create a test source with one channel
+        source = SourceInfo(
+            id=uuid.uuid4(),
+            user_id=test_data["user"].id,
+            source_type=SourceType.CHANNEL_COLLECTION,
+            name="Test Duplicate Channel",
+            created_at=datetime.now(timezone.utc)
+        )
+        channel_monitor.database.insert_source(source)
+        
+        # Add first test channel
+        source_channel = SourceChannelInfo(
+            source_id=source.id,
+            youtube_channel_id=test_channel_ids[0]
+        )
+        channel_monitor.database.insert_source_channel(source_channel)
+        
+        # First run to populate videos
+        await channel_monitor.run(test_data["user"].id)
+        
+        # Get initial video count
+        initial_videos = channel_monitor.database.get_source_videos_by_source(source.id)
+        initial_count = len(initial_videos)
+        
+        # Second run should handle duplicates
+        jobs = await channel_monitor.run(test_data["user"].id)
+        assert jobs, "No jobs were created on second run"
+        
+        # Verify no duplicate videos in database
+        final_videos = channel_monitor.database.get_source_videos_by_source(source.id)
+        assert len(final_videos) == initial_count, "Duplicate videos were stored"
 
-# Progress Tracking Tests
-def test_progress_tracking(channel_monitor):
-    """Test that progress tracking works correctly."""
-    source_id = str(uuid.uuid4())
-    
-    # Test initial update
-    channel_monitor._update_progress(source_id, total=100)
-    assert channel_monitor._progress[source_id]["total"] == 100
-    assert channel_monitor._progress[source_id]["processed"] == 0
-    
-    # Test progress update
-    channel_monitor._update_progress(source_id, processed=50)
-    assert channel_monitor._progress[source_id]["total"] == 100
-    assert channel_monitor._progress[source_id]["processed"] == 50
-    
-    # Test completion
-    channel_monitor._update_progress(source_id, processed=100)
-    assert channel_monitor._progress[source_id]["processed"] == 100
+    @pytest.mark.integration
+    async def test_nonexistent_user(self, channel_monitor):
+        """Test running monitor for nonexistent user."""
+        # Test with nonexistent user ID
+        jobs = await channel_monitor.run("nonexistent_user_id")
+        assert jobs == [], "Expected empty list for nonexistent user"
+        
+        # Test with invalid user ID format
+        jobs = await channel_monitor.run("")
+        assert jobs == [], "Expected empty list for invalid user ID"
+        
+        # Test with None user ID
+        jobs = await channel_monitor.run(None)  # type: ignore
+        assert jobs == [], "Expected empty list for None user ID"
 
-# Integration-style Tests
-@pytest.mark.asyncio
-async def test_full_processing_flow(
-    channel_monitor, mock_database, mock_youtube_api,
-    test_user, test_source, test_channel, test_video
-):
-    """Test the full processing flow from channel to job creation."""
-    # Setup initial state
-    source_channel = SourceChannelInfo(
-        source_id=test_source.id,
-        youtube_channel_id=test_channel.youtube_channel_id
-    )
-    
-    # Setup mocks
-    mock_database.get_user.return_value = test_user
-    mock_database.get_sources_by_user.return_value = [test_source]
-    mock_database.get_source_channels_by_source.return_value = [source_channel]
-    mock_database.get_channel.return_value = test_channel
-    mock_youtube_api.fetch_channel_videos = AsyncMock(return_value=[test_video])
-    mock_database.get_video.return_value = None
-    mock_database.insert_video.return_value = test_video
-    mock_database.insert_source_video.return_value = SourceVideoInfo(
-        source_id=test_source.id,
-        youtube_video_id=test_video.youtube_video_id
-    )
-    mock_database.insert_generation_job.return_value = GenerationJob(
-        id=uuid.uuid4(),
-        user_id=test_user.id,
-        source_id=test_source.id,
-        status=JobStatus.QUEUED,
-        created_at=datetime.now(timezone.utc)
-    )
-    
-    # Run the full process
-    result = await channel_monitor.run(test_user.id)
-    
-    # Verify the complete flow
-    assert len(result) == 1
-    assert isinstance(result[0], GenerationJob)
-    assert result[0].user_id == test_user.id
-    assert result[0].source_id == test_source.id
-    assert result[0].status == JobStatus.QUEUED
-    
-    # Verify all expected database calls were made
-    mock_database.get_user.assert_called_once()
-    mock_database.get_sources_by_user.assert_called_once()
-    mock_database.get_source_channels_by_source.assert_called_once()
-    mock_database.get_channel.assert_called_once()
-    mock_database.insert_video.assert_called_once()
-    mock_database.insert_generation_job.assert_called_once()
-    mock_database.update_source.assert_called_once() 
+    @pytest.mark.integration
+    async def test_empty_source(self, channel_monitor, test_data):
+        """Test monitoring an empty channel collection."""
+        # First clean up any existing sources for this user
+        try:
+            existing_sources = channel_monitor.database.get_sources_by_user(test_data["user"].id)
+            for existing_source in existing_sources:
+                # Clean up related data
+                channel_monitor.database.client.table('podcasts')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('source_videos')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('source_channels')\
+                    .delete()\
+                    .eq('source_id', str(existing_source.id))\
+                    .execute()
+                channel_monitor.database.client.table('sources')\
+                    .delete()\
+                    .eq('id', str(existing_source.id))\
+                    .execute()
+        except Exception as e:
+            print(f"Error cleaning up existing data: {str(e)}")
+
+        # Create empty source
+        source = SourceInfo(
+            id=uuid.uuid4(),
+            user_id=test_data["user"].id,
+            source_type=SourceType.CHANNEL_COLLECTION,
+            name="Empty Collection",
+            created_at=datetime.now(timezone.utc)
+        )
+        
+        try:
+            # Insert the source
+            channel_monitor.database.insert_source(source)
+            
+            # Verify no channels are linked
+            source_channels = channel_monitor.database.get_source_channels(source.id)
+            assert not source_channels, "Source should have no channels"
+
+            # Run the monitor
+            jobs = await channel_monitor.run(test_data["user"].id)
+            assert not jobs, "Jobs were created for empty source"
+            
+        finally:
+            # Clean up test data
+            try:
+                channel_monitor.database.client.table('sources')\
+                    .delete()\
+                    .eq('id', str(source.id))\
+                    .execute()
+            except Exception as e:
+                print(f"Error cleaning up test data: {str(e)}")
+
+    @pytest.mark.integration
+    async def test_progress_tracking(self, channel_monitor, test_data, setup_test_channels):
+        """Test progress tracking with real processing."""
+        test_channel_ids = setup_test_channels
+        
+        test_data = test_data
+        
+        # Create source with multiple channels
+        source = SourceInfo(
+            id=uuid.uuid4(),
+            user_id=test_data["user"].id,
+            source_type=SourceType.CHANNEL_COLLECTION,
+            name="Progress Test Collection",
+            created_at=datetime.now(timezone.utc)
+        )
+        channel_monitor.database.insert_source(source)
+        
+        # Add all test channels
+        for channel_id in test_channel_ids:
+            source_channel = SourceChannelInfo(
+                source_id=source.id,
+                youtube_channel_id=channel_id
+            )
+            channel_monitor.database.insert_source_channel(source_channel)
+        
+        # Run monitor
+        await channel_monitor.run(test_data["user"].id)
+        
+        # Verify progress was tracked
+        progress = channel_monitor._progress[str(source.id)]
+        assert progress["total"] == len(test_channel_ids)
+        assert progress["processed"] == progress["total"] 

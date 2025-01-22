@@ -13,7 +13,7 @@ from models.source_channel_info import SourceChannelInfo
 from models.video_metadata import VideoMetadata
 from models.generation_job import GenerationJob, JobStatus
 from utils.api_wrappers import YouTubeAPI
-from utils.database import Database
+from utils.database import Database, RecordNotFoundError
 from utils.logger import setup_logger
 from models.source_video_info import SourceVideoInfo
 
@@ -75,11 +75,14 @@ class ChannelMonitorAgent:
         """
         logger.info(f"Starting channel monitoring for user ID: {user_id}")
 
-        user = self.database.get_user(user_id=user_id)
-        if not user:
-          logger.error(f"User with ID {user_id} not found.")
-          return []
-
+        try:
+            user = self.database.get_user(user_id=user_id)
+            if not user:
+                logger.warning(f"User with ID {user_id} not found.")
+                return []
+        except RecordNotFoundError:
+            logger.warning(f"User with ID {user_id} not found.")
+            return []
 
         sources = self.database.get_sources_by_user(user_id=user_id)
         if not sources:
@@ -92,50 +95,54 @@ class ChannelMonitorAgent:
             logger.info(f"Checking source: {source.name} (ID: {source.id})")
 
             if source.source_type == SourceType.CHANNEL_COLLECTION:
+                # Get channels for this source
+                source_channels = self.database.get_source_channels(source.id)
+                if not source_channels:
+                    logger.info(f"Skipping empty channel collection source: {source.name} (ID: {source.id})")
+                    continue
                 await self._process_channel_collection(user, source, jobs)
+                
             elif source.source_type == SourceType.PLAYLIST:
+                if not source.youtube_playlist_id:
+                    logger.warning(f"Skipping playlist source without playlist ID: {source.name} (ID: {source.id})")
+                    continue
                 await self._process_playlist(user, source, jobs)
 
         logger.info(f"Channel monitoring finished, {len(jobs)} jobs were generated.")
         return jobs
 
-
     async def _process_channel_collection(self, user: UserInfo, source: SourceInfo, jobs: List[GenerationJob]):
-        """Processes a channel collection for new videos with progress tracking."""
-        logger.info(f"Processing channel collection: {source.name} (ID: {source.id})")
-        source_channels = self.database.get_source_channels_by_source(source.id)
+        """Process a channel collection source."""
+        source_channels = self.database.get_source_channels(source.id)
         if not source_channels:
-            logger.warning(f"No channels found for source: {source.name} (ID: {source.id})")
+            logger.info(f"No channels found in collection: {source.name} (ID: {source.id})")
             return
 
-        self._update_progress(source.id, total=len(source_channels))
-        processed_channels = 0
-
         all_new_videos = []
-        for source_channel in source_channels:
+        for channel in source_channels:
             try:
-                channel = self.database.get_channel(youtube_channel_id=source_channel.youtube_channel_id)
-                if not channel:
-                    logger.warning(f"Channel with youtube id {source_channel.youtube_channel_id} not found in database.")
-                    continue
-
-                new_videos = await self._fetch_new_videos_from_channel(channel=channel, user_id=user.id)
-                all_new_videos.extend(new_videos)
-                
-                processed_channels += 1
-                self._update_progress(source.id, processed=processed_channels)
-                
+                videos = await self.youtube_api.fetch_channel_videos(channel.youtube_channel_id)
+                if videos:
+                    all_new_videos.extend(videos)
             except Exception as e:
-                logger.error(f"Error processing channel {source_channel.youtube_channel_id}: {e}")
+                logger.error(f"Error fetching videos for channel {channel.youtube_channel_id}: {e}")
                 continue
 
-        await self._process_new_videos(user=user, source=source, new_videos=all_new_videos, jobs=jobs)
+        if all_new_videos:
+            await self._process_new_videos(user, source, all_new_videos, jobs)
 
     async def _process_playlist(self, user: UserInfo, source: SourceInfo, jobs: List[GenerationJob]):
-        """Processes a playlist for new videos."""
-        logger.info(f"Processing playlist: {source.name} (ID: {source.id})")
-        new_videos = await self._fetch_new_videos_from_playlist(source=source, user_id=user.id)
-        await self._process_new_videos(user=user, source=source, new_videos=new_videos, jobs=jobs)
+        """Process a playlist source."""
+        if not source.youtube_playlist_id:
+            logger.warning(f"No playlist ID for source: {source.name} (ID: {source.id})")
+            return
+
+        try:
+            videos = await self.youtube_api.fetch_playlist_videos(source.youtube_playlist_id)
+            if videos:
+                await self._process_new_videos(user, source, videos, jobs)
+        except Exception as e:
+            logger.error(f"Error fetching videos for playlist {source.youtube_playlist_id}: {e}")
 
     async def _process_videos(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
         """Helper method to process and store videos."""
@@ -160,17 +167,16 @@ class ChannelMonitorAgent:
                 processed_ids.add(video.youtube_video_id)
         return processed_videos
 
-    async def _fetch_new_videos_from_channel(self, channel: ChannelInfo, user_id: str) -> List[VideoMetadata]:
+    async def _fetch_new_videos_from_channel(self, channel: ChannelInfo) -> List[VideoMetadata]:
         """Fetches new videos from a YouTube channel with rate limiting."""
         try:
             await self._check_rate_limit()
             logger.info(f"Fetching new videos from channel: {channel.title}")
             latest_videos = await self.youtube_api.fetch_channel_videos(
-                channel_id=channel.youtube_channel_id,
-                user_id=user_id
+                channel_id=channel.youtube_channel_id
             )
             logger.info(f"Found {len(latest_videos)} new videos from channel: {channel.title}")
-            return latest_videos  # Return raw videos without processing
+            return latest_videos
         except Exception as e:
             if 'quota exceeded' in str(e).lower():
                 logger.error("YouTube API quota exceeded. Waiting before retry...")
@@ -179,7 +185,7 @@ class ChannelMonitorAgent:
             logger.error(f"Error fetching videos from channel {channel.title}: {e}")
             return []
 
-    async def _fetch_new_videos_from_playlist(self, source: SourceInfo, user_id: str) -> List[VideoMetadata]:
+    async def _fetch_new_videos_from_playlist(self, source: SourceInfo) -> List[VideoMetadata]:
         """Fetches new videos from a YouTube playlist."""
         logger.info(f"Fetching new videos from playlist: {source.name}")
         if not source.youtube_playlist_id:
@@ -188,11 +194,10 @@ class ChannelMonitorAgent:
 
         try:
             latest_videos = await self.youtube_api.fetch_playlist_videos(
-                playlist_id=source.youtube_playlist_id,
-                user_id=user_id
+                playlist_id=source.youtube_playlist_id
             )
             logger.info(f"Found {len(latest_videos)} new videos from playlist: {source.name}")
-            return latest_videos  # Return raw videos without processing
+            return latest_videos
         except Exception as e:
             logger.error(f"Error fetching videos from playlist: {e}")
             return []
