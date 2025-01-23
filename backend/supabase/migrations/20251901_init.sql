@@ -16,6 +16,8 @@ CREATE TABLE users (
   id               TEXT PRIMARY KEY,  -- Firebase UID
   email            TEXT UNIQUE NOT NULL,
   display_name     TEXT,
+  refresh_token    TEXT,              -- YouTube OAuth refresh token
+  token_expires_at TIMESTAMPTZ,       -- Token expiration timestamp
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );

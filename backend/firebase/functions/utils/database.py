@@ -450,33 +450,27 @@ class Database:
 
     @_monitor_query
     def insert_channel(self, channel: ChannelInfo) -> ChannelInfo:
-        """Insert a new channel.
+        """Insert or update a channel.
         
         Args:
-            channel: Channel information to insert
+            channel: Channel information to insert/update
             
         Returns:
-            ChannelInfo: Inserted channel information
+            ChannelInfo: Inserted/updated channel information
             
         Raises:
-            DuplicateRecordError: If channel with same ID already exists
-            DatabaseError: If there's an error inserting the channel
+            DatabaseError: If there's an error upserting the channel
         """
-        logger.info(f"Inserting channel in DB: {channel}")
+        logger.info(f"Upserting channel in DB: {channel}")
         try:
             response = self.client.table('channels')\
-                .insert(self._serialize_model(channel))\
+                .upsert(self._serialize_model(channel), 
+                       on_conflict='youtube_channel_id')\
                 .execute()
             return ChannelInfo(**response.data[0])
         except Exception as e:
-            error_msg = str(e)
-            if 'duplicate key value violates unique constraint' in error_msg:
-                logger.error(f"Duplicate channel error: {error_msg}")
-                raise DuplicateRecordError(
-                    f"Channel with ID {channel.youtube_channel_id} already exists"
-                )
-            logger.error(f"Error inserting channel: {error_msg}")
-            raise DatabaseError(f"Error inserting channel: {error_msg}")
+            logger.error(f"Error upserting channel: {e}")
+            raise DatabaseError(f"Error upserting channel: {e}")
 
     def update_channel(self, youtube_channel_id: str, updated_data: Dict) -> Optional[ChannelInfo]:
         """Update channel information.
@@ -642,13 +636,16 @@ class Database:
             raise DatabaseError(f"Error fetching video: {str(e)}")
 
     def insert_video(self, video: VideoMetadata) -> Optional[VideoMetadata]:
-        """Insert a new video."""
-        logger.info(f"Inserting video in DB: {video.title} ({video.youtube_video_id})")
+        """Insert or update a video."""
+        logger.info(f"Upserting video in DB: {video.title} ({video.youtube_video_id})")
         try:
-            response = self.client.table('videos').insert(self._serialize_model(video)).execute()
+            response = self.client.table('videos').upsert(
+                self._serialize_model(video),
+                on_conflict='youtube_video_id'
+            ).execute()
             return VideoMetadata(**response.data[0])
         except Exception as e:
-            logger.error(f"Error inserting video: {str(e)}")
+            logger.error(f"Error upserting video: {str(e)}")
             return None
 
     def bulk_insert_videos(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
@@ -1205,3 +1202,30 @@ class Database:
         except Exception as e:
             logger.error(f"Error getting podcast videos: {str(e)}")
             raise DatabaseError(f"Error getting podcast videos: {str(e)}")
+
+    def get_source_video_status(self, source_id: uuid.UUID, youtube_video_id: str) -> Optional[datetime]:
+        """Get processing status of a video for a source."""
+        try:
+            source_video = self.get_source_video(source_id, youtube_video_id)
+            return source_video.processed_at if source_video else None
+        except Exception as e:
+            logger.error(f"Error getting source video status: {e}")
+            return None
+
+    def get_videos_for_job(self, job_id: uuid.UUID) -> List[VideoMetadata]:
+        """Get all videos associated with a generation job."""
+        try:
+            job = self.get_generation_job(job_id)
+            if not job or not job.config.processing_options.get('video_ids'):
+                return []
+            
+            video_ids = job.config.processing_options['video_ids']
+            videos = []
+            for video_id in video_ids:
+                video = self.get_video(video_id)
+                if video:
+                    videos.append(video)
+            return videos
+        except Exception as e:
+            logger.error(f"Error getting videos for job: {e}")
+            return []

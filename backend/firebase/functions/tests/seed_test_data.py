@@ -40,14 +40,14 @@ def seed_test_data():
     # Create test channels
     test_channels = [
         ChannelInfo(
-            youtube_channel_id="UCtest123",
+            youtube_channel_id="UCawZsQWqfGSbCI5yjkdVkTA",
             title="Test Channel 1",
             description="Test Description 1",
             channel_url="https://youtube.com/c/test1",
             created_at=datetime.now(timezone.utc)
         ),
         ChannelInfo(
-            youtube_channel_id="UCtest456",
+            youtube_channel_id="UCCatR7nWbYrkVXdxXb4cGXw",
             title="Test Channel 2",
             description="Test Description 2",
             channel_url="https://youtube.com/c/test2",
@@ -83,7 +83,8 @@ def seed_test_data():
             description=f"Test Description {i}",
             channel_id=inserted_channels[0].youtube_channel_id,
             url=f"https://youtube.com/watch?v=video{i}",
-            uploaded_at=datetime.now(timezone.utc)
+            uploaded_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc)
         ) for i in range(1, 3)
     ]
     inserted_videos = db.bulk_insert_videos(test_videos)

@@ -1,7 +1,7 @@
 # agents/channel_monitor.py
 import asyncio
 from typing import List, Optional, Tuple, Dict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 from collections import defaultdict
 import time
@@ -11,7 +11,7 @@ from models.channel_info import ChannelInfo
 from models.source_info import SourceInfo, SourceType
 from models.source_channel_info import SourceChannelInfo
 from models.video_metadata import VideoMetadata
-from models.generation_job import GenerationJob, JobStatus
+from models.generation_job import GenerationJob, JobStatus, JobConfig
 from utils.api_wrappers import YouTubeAPI
 from utils.database import Database, RecordNotFoundError
 from utils.logger import setup_logger
@@ -151,6 +151,33 @@ class ChannelMonitorAgent:
 
     async def _process_videos(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
         """Helper method to process and store videos."""
+        logger.info(f"Processing {len(videos)} videos")
+
+        # Ensure the video's channel is in the database
+        channels_to_upsert = []
+        # Extract unique channel IDs from videos
+        unique_channel_ids = {video.channel_id for video in videos}
+        for channel_id in unique_channel_ids:
+            channel = self.database.get_channel(youtube_channel_id=channel_id)
+            if not channel:
+                logger.warning(f"Channel {channel_id} not found in database")
+                channels_to_upsert.append(channel_id)
+        
+        if channels_to_upsert:
+            logger.info(f"Upserting {len(channels_to_upsert)} channels before processing videos")
+            new_channels = []
+            for channel_id in channels_to_upsert:
+                channel = await self.youtube_api.fetch_channel_info(channel_id)
+                if channel:
+                    new_channels.append(channel)
+            self.database.bulk_insert_channels(new_channels)
+
+        for video in videos:
+            channel = self.database.get_channel(youtube_channel_id=video.channel_id)
+            if not channel:
+                logger.error(f"Channel {video.channel_id} not found in database")
+                continue
+
         processed_videos = []
         # Use a set to track processed video IDs in this batch
         processed_ids = set()
@@ -209,6 +236,11 @@ class ChannelMonitorAgent:
 
     async def _process_videos_batch(self, videos: List[VideoMetadata]) -> List[VideoMetadata]:
         """Process a batch of videos with retry logic."""
+
+        # Filter out videos without channel_id
+        videos = [v for v in videos if hasattr(v, 'channel_id') and v.channel_id]
+        
+        logger.info(f"Processing {len(videos)} videos")
         processed_videos = []
         retry_count = 0
         
@@ -242,68 +274,106 @@ class ChannelMonitorAgent:
         
         return processed_videos
 
-    async def _process_new_videos(self, user: UserInfo, source: SourceInfo, new_videos: List[VideoMetadata], jobs: List[GenerationJob]):
-        """Processes new videos from a source, updates the database, and creates a generation job."""
+    async def _process_new_videos(self, user: UserInfo, source: SourceInfo, new_videos: List[VideoMetadata], jobs: List[GenerationJob]) -> Optional[GenerationJob]:
+        """Process new videos and create generation job if needed."""
         
-        logger.info(f"Processing {len(new_videos)} new videos from source: {source.name} (ID: {source.id})")
-        
-        # Group videos by channel for more efficient processing
-        videos_by_channel = defaultdict(list)
+        logger.info(f"Processing {len(new_videos)} new videos for source: {source.name}")
+
+        # Filter videos to process based on source preferences
+        videos_to_process = []
         for video in new_videos:
-            videos_by_channel[video.channel_id].append(video)
-            
-        # Process videos in batches by channel
-        processed_videos_all = []
-        for channel_id, channel_videos in videos_by_channel.items():
-            try:
-                processed_videos = await self._process_videos_batch(channel_videos)
-                processed_videos_all.extend(processed_videos)
-                
-                # Bulk insert source video links
-                source_videos = [
-                    SourceVideoInfo(source_id=source.id, youtube_video_id=video.youtube_video_id)
-                    for video in processed_videos
-                ]
-                
-                # Use database's bulk operations
-                for batch in [source_videos[i:i + self.batch_size] for i in range(0, len(source_videos), self.batch_size)]:
-                    try:
-                        self.database.bulk_insert_source_videos(batch)
-                    except Exception as e:
-                        logger.error(f"Error bulk inserting source videos: {e}")
-                        # Fall back to individual inserts if bulk fails
-                        for source_video in batch:
-                            try:
-                                self.database.insert_source_video(source_video=source_video)
-                            except Exception as e:
-                                logger.error(f"Error inserting source video {source_video.youtube_video_id}: {e}")
-                                
-            except Exception as e:
-                logger.error(f"Error processing videos for channel {channel_id}: {e}")
-                continue
-
-        if not processed_videos_all:
-            logger.info(f"No new videos to process for source: {source.name} (ID: {source.id})")
-            return
-
-        # Create a new generation job
+            if self._should_process_video(video, source):
+                videos_to_process.append(video)
+        
+        if not videos_to_process:
+            logger.info(f"No new videos to process for source: {source.name}")
+            return None
+        
+        # Process videos in database
+        processed_videos = await self._process_videos_batch(videos_to_process)
+        logger.info(f"Processed {len(processed_videos)} videos for source: {source.name}")
+        
+        # Create source-video relationships
+        source_videos = [
+            SourceVideoInfo(
+                source_id=source.id,
+                youtube_video_id=video.youtube_video_id
+            )
+            for video in processed_videos
+        ]
+        
+        # Bulk insert relationships
+        self.database.bulk_insert_source_videos(source_videos)
+        
+        # Create generation job with specific config
         job = GenerationJob(
             user_id=user.id,
             source_id=source.id,
             status=JobStatus.QUEUED,
-            created_at=datetime.now()
+            config=JobConfig(
+                processing_options={
+                    'video_ids': [v.youtube_video_id for v in processed_videos],
+                    'source_id': str(source.id),
+                    'preferences': source.preferences
+                }
+            ),
+            created_at=datetime.now(timezone.utc)
         )
         
-        inserted_job = self.database.insert_generation_job(job=job)
+        # Insert the job and verify the source ID
+        inserted_job = self.database.insert_generation_job(job)
         if inserted_job:
+            # Add logging to debug the source ID mismatch
+            logger.info(f"Original source ID: {source.id}")
+            logger.info(f"Job source ID before insert: {job.source_id}")
+            logger.info(f"Inserted job source ID: {inserted_job.source_id}")
+            
+            # Verify source IDs match
+            if str(inserted_job.source_id) != str(source.id):
+                logger.error(f"Source ID mismatch: job {inserted_job.source_id} != source {source.id}")
+                return None
+            
             jobs.append(inserted_job)
-            logger.info(f"Created generation job with id {job.id} for source: {source.name} (ID: {source.id})")
-        else:
-            logger.error(f"Could not create generation job for source: {source.name} (ID: {source.id})")
+            
+            # Update source's last_processed_at
+            self.database.update_source(
+                source_id=source.id,
+                updated_data={"last_processed_at": datetime.now(timezone.utc)}
+            )
+            
+            return inserted_job
+        return None
 
-        # Update the last_processed_at timestamp
-        updated_source = self.database.update_source(source_id=source.id, updated_data={"last_processed_at": datetime.now()})
-        if updated_source:
-            logger.info(f"Updated last processed timestamp for source: {source.name} (ID: {source.id}) to {updated_source.last_processed_at}")
+    def _should_process_video(self, video: VideoMetadata, source: SourceInfo) -> bool:
+        """Determine if a video should be included in processing."""
+        
+        # Skip if no upload date available
+        if not video.uploaded_at:
+            logger.warning(f"Video {video.youtube_video_id} has no upload date, skipping")
+            return False
+        
+        # Ensure video.uploaded_at is timezone-aware
+        if video.uploaded_at.tzinfo is None:
+            video_upload_time = video.uploaded_at.replace(tzinfo=timezone.utc)
         else:
-            logger.error(f"Could not update last processed timestamp for source: {source.name} (ID: {source.id})")
+            video_upload_time = video.uploaded_at
+        
+        # If source was never processed, include all videos
+        if not source.last_processed_at:
+            logger.info(f"Source {source.name} has never been processed: including video {video.youtube_video_id}")
+            return True
+            # thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+            # is_video_new = video_upload_time >= thirty_days_ago
+            # logger.info(f"Video {video.youtube_video_id} {'added for processing' if is_video_new else 'skipped for processing'}")
+            # return is_video_new
+        
+        # Ensure source.last_processed_at is timezone-aware
+        if source.last_processed_at.tzinfo is None:
+            last_processed = source.last_processed_at.replace(tzinfo=timezone.utc)
+        else:
+            last_processed = source.last_processed_at
+        
+        # For subsequent runs, only include videos uploaded after last processing
+        logger.info(f"Source last processed at: {last_processed}, video upload time: {video_upload_time}")
+        logger.info(f"Should process video: {video_upload_time > last_processed}")
+        return video_upload_time > last_processed

@@ -104,7 +104,7 @@ def event_loop(event_loop_policy):
 @pytest.fixture(scope="session")
 async def aiohttp_session() -> AsyncGenerator[aiohttp.ClientSession, None]:
     """Create a shared aiohttp ClientSession for tests."""
-    timeout = aiohttp.ClientTimeout(total=10)
+    timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         yield session
 

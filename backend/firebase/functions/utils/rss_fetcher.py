@@ -55,13 +55,17 @@ class YouTubeRSSFetcher:
         """Fetches RSS feed content from URL."""
         try:
             async with self._get_session() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        return await response.text()
-                    logger.error(f"Failed to fetch RSS feed. Status: {response.status}")
-                    return None
+                async with asyncio.timeout(10):  # Modern asyncio timeout
+                    async with session.get(url) as response:
+                        if response.status == 200:
+                            return await response.text()
+                        logger.error(f"Failed to fetch RSS feed. Status: {response.status}")
+                        return None
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout while fetching RSS feed from {url}")
+            return None
         except Exception as e:
-            logger.error(f"Error fetching RSS feed: {e}")
+            logger.error(f"Error fetching RSS feed: {str(e)}")
             return None
 
     async def fetch_channel_videos(self, channel_id: str, max_videos: int = 15) -> List[VideoMetadata]:
