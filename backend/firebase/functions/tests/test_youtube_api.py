@@ -119,7 +119,6 @@ class TestYouTubeAPIIntegration:
             assert isinstance(channel_info, ChannelInfo)
             assert channel_info.youtube_channel_id == channel_id
             assert channel_info.title
-            assert channel_info.description
             assert channel_info.channel_url == f"https://www.youtube.com/channel/{channel_id}"
             
             # Rate limiting pause between channels

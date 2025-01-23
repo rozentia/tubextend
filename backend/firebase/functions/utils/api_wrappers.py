@@ -30,7 +30,13 @@ class YouTubeAPI:
         self.database = database
         self.api_key = config.youtube_api_key
         self._youtube = None
-        self._rss_fetcher = YouTubeRSSFetcher(session=session)
+        self._session = session
+        self._rss_fetcher = None
+
+    async def _ensure_rss_fetcher(self):
+        """Ensures RSS fetcher is initialized with proper session."""
+        if self._rss_fetcher is None:
+            self._rss_fetcher = YouTubeRSSFetcher(session=self._session)
 
     async def _get_youtube_client(self):
         """
@@ -71,6 +77,7 @@ class YouTubeAPI:
             except HttpError as e:
                 if e.resp.status == 403:  # Quota exceeded
                     logger.warning(f"YouTube API quota exceeded: {e}. Falling back to RSS feed.")
+                    await self._ensure_rss_fetcher()
                     return await self._rss_fetcher.fetch_channel_videos(channel_id)
                 raise
 
@@ -97,6 +104,7 @@ class YouTubeAPI:
             # Try RSS fallback for any YouTube API error
             try:
                 logger.info("Attempting RSS feed fallback...")
+                await self._ensure_rss_fetcher()
                 return await self._rss_fetcher.fetch_channel_videos(channel_id)
             except Exception as rss_error:
                 logger.error(f"RSS fallback also failed: {rss_error}")
@@ -128,6 +136,7 @@ class YouTubeAPI:
             except HttpError as e:
                 if e.resp.status == 403:  # Quota exceeded
                     logger.warning(f"YouTube API quota exceeded: {e}. Falling back to RSS feed.")
+                    await self._ensure_rss_fetcher()
                     return await self._rss_fetcher.fetch_playlist_videos(playlist_id)
                 raise
 
@@ -154,6 +163,7 @@ class YouTubeAPI:
             # Try RSS fallback for any YouTube API error
             try:
                 logger.info("Attempting RSS feed fallback...")
+                await self._ensure_rss_fetcher()
                 return await self._rss_fetcher.fetch_playlist_videos(playlist_id)
             except Exception as rss_error:
                 logger.error(f"RSS fallback also failed: {rss_error}")
@@ -161,7 +171,8 @@ class YouTubeAPI:
 
     async def fetch_channel_info(self, channel_id: str) -> Optional[ChannelInfo]:
         """
-        Fetches channel information by its youtube id
+        Fetches channel information by its youtube id.
+        First attempts to fetch from RSS feed, falls back to YouTube API if RSS fails.
 
         Args:
             channel_id (str): The YouTube channel ID.
@@ -170,6 +181,19 @@ class YouTubeAPI:
             ChannelInfo: A channel info record or none if no channel is found.
         """
         logger.info(f"Fetching channel info for channel ID: {channel_id}")
+        
+        # First try RSS feed
+        try:
+            logger.info("Attempting to fetch channel info from RSS feed...")
+            await self._ensure_rss_fetcher()
+            channel_info = await self._rss_fetcher.fetch_channel_info(channel_id)
+            if channel_info:
+                logger.info(f"Successfully fetched channel info from RSS for channel ID: {channel_id}")
+                return channel_info
+        except Exception as rss_error:
+            logger.warning(f"RSS fetch failed for channel ID {channel_id}: {rss_error}. Falling back to YouTube API.")
+
+        # Fallback to YouTube API if RSS fails
         try:
             youtube = await self._get_youtube_client()
             request = youtube.channels().list(
@@ -186,14 +210,14 @@ class YouTubeAPI:
                     description=item["snippet"]["description"],
                     channel_url=f"https://www.youtube.com/channel/{channel_id}"
                 )
-                logger.info(f"Fetched channel info for channel ID: {channel_id}: {channel_info}")
+                logger.info(f"Fetched channel info from API for channel ID: {channel_id}")
                 return channel_info
             else:
                 logger.warning(f"Could not fetch channel info for channel ID: {channel_id}, channel was not found.")
                 return None
 
         except HttpError as e:
-            logger.error(f"An error occurred while fetching channel info for channel ID {channel_id}: {e}")
+            logger.error(f"YouTube API fetch failed for channel ID {channel_id}: {e}")
             return None
 
     async def close(self):

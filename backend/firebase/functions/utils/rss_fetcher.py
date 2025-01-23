@@ -20,28 +20,36 @@ class YouTubeRSSFetcher:
     def __init__(self, session: Optional[aiohttp.ClientSession] = None):
         self.session = session
         self._session_owner = session is None
+        self._session_lock = asyncio.Lock()
+        self._context_depth = 0  # Track nested context depth
     
     @asynccontextmanager
     async def _get_session(self):
         """Get or create a session with proper timeout configuration."""
-        if not self.session or self.session.closed:
-            # Create new session only if we don't have one or it's closed
-            timeout = aiohttp.ClientTimeout(total=10)
-            self.session = aiohttp.ClientSession(timeout=timeout)
-            self._session_owner = True
+        async with self._session_lock:
+            if not self.session or self.session.closed:
+                # Create new session only if we don't have one or it's closed
+                timeout = aiohttp.ClientTimeout(total=10)
+                self.session = aiohttp.ClientSession(timeout=timeout)
+                self._session_owner = True
+            self._context_depth += 1
         
         try:
             yield self.session
         finally:
-            if self._session_owner and self.session and not self.session.closed:
-                await self.session.close()
-                self.session = None
+            async with self._session_lock:
+                self._context_depth -= 1
+                if self._context_depth == 0 and self._session_owner and self.session and not self.session.closed:
+                    await self.session.close()
+                    self.session = None
     
     async def close(self):
         """Close the session if we own it."""
-        if self._session_owner and self.session and not self.session.closed:
-            await self.session.close()
-            self.session = None
+        async with self._session_lock:
+            if self._session_owner and self.session and not self.session.closed:
+                await self.session.close()
+                self.session = None
+                self._context_depth = 0
     
     async def fetch_feed(self, url: str) -> Optional[str]:
         """Fetches RSS feed content from URL."""

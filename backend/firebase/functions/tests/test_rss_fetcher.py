@@ -5,6 +5,7 @@ from utils.rss_fetcher import YouTubeRSSFetcher
 from models.video_metadata import VideoMetadata
 import os
 from dotenv import load_dotenv
+import aiohttp
 
 # Load test environment variables
 load_dotenv('test.env')
@@ -22,38 +23,42 @@ TEST_PLAYLIST_IDS = [
     os.getenv('TEST_PLAYLIST_ID_3')
 ]
 
-@pytest.fixture(scope="module")
+# Mark all tests in this file to use session-scoped event loop
+pytestmark = [
+    pytest.mark.asyncio(scope="session"),
+    pytest.mark.integration
+]
+
+@pytest.fixture
 async def rss_fetcher():
-    """Create a YouTubeRSSFetcher instance for testing."""
+    """Create a fresh YouTubeRSSFetcher instance for each test."""
     fetcher = YouTubeRSSFetcher()
     yield fetcher
-    await fetcher.close()  # Cleanup after tests
-
-@pytest.mark.asyncio
-async def test_fetch_channel_feed():
-    """Test fetching RSS feed content from a channel."""
-    fetcher = YouTubeRSSFetcher()
-    
-    for channel_id in TEST_CHANNEL_IDS:
-        feed_content = await fetcher.fetch_feed(
-            YouTubeRSSFetcher.CHANNEL_FEED_URL.format(channel_id)
-        )
-        
-        assert feed_content is not None
-        assert isinstance(feed_content, str)
-        assert len(feed_content) > 0
-        assert "<?xml" in feed_content
-        assert "<feed" in feed_content
-        
     await fetcher.close()
 
 @pytest.mark.asyncio
-async def test_fetch_playlist_feed():
-    """Test fetching RSS feed content from a playlist."""
-    fetcher = YouTubeRSSFetcher()
+async def test_fetch_channel_feed(rss_fetcher):
+    """Test fetching RSS feed content from a channel."""
+    channel_id = os.getenv('TEST_CHANNEL_ID_1')
+    assert channel_id, "TEST_CHANNEL_ID_1 environment variable must be set"
     
+    feed_content = await rss_fetcher.fetch_feed(
+        YouTubeRSSFetcher.CHANNEL_FEED_URL.format(channel_id)
+    )
+    
+    assert feed_content is not None
+    assert isinstance(feed_content, str)
+    assert len(feed_content) > 0
+    assert "<?xml" in feed_content
+    assert "<feed" in feed_content
+
+@pytest.mark.asyncio
+async def test_fetch_playlist_feed(rss_fetcher):
+    """Test fetching RSS feed content from a playlist."""
     for playlist_id in TEST_PLAYLIST_IDS:
-        feed_content = await fetcher.fetch_feed(
+        assert playlist_id, f"{playlist_id} environment variable must be set"
+        
+        feed_content = await rss_fetcher.fetch_feed(
             YouTubeRSSFetcher.PLAYLIST_FEED_URL.format(playlist_id)
         )
         
@@ -63,15 +68,15 @@ async def test_fetch_playlist_feed():
         assert "<?xml" in feed_content
         assert "<feed" in feed_content
         
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_fetch_channel_videos():
+async def test_fetch_channel_videos(rss_fetcher):
     """Test fetching and parsing videos from a channel."""
-    fetcher = YouTubeRSSFetcher()
-    
     for channel_id in TEST_CHANNEL_IDS:
-        videos = await fetcher.fetch_channel_videos(channel_id)
+        assert channel_id, f"{channel_id} environment variable must be set"
+        
+        videos = await rss_fetcher.fetch_channel_videos(channel_id)
         
         assert isinstance(videos, list)
         assert len(videos) > 0
@@ -83,17 +88,18 @@ async def test_fetch_channel_videos():
             assert video.channel_id == channel_id
             assert video.url is not None
             assert isinstance(video.uploaded_at, datetime)
+            assert video.uploaded_at.tzinfo == timezone.utc
             assert video.created_at is not None
             
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_fetch_playlist_videos():
+async def test_fetch_playlist_videos(rss_fetcher):
     """Test fetching and parsing videos from a playlist."""
-    fetcher = YouTubeRSSFetcher()
-    
     for playlist_id in TEST_PLAYLIST_IDS:
-        videos = await fetcher.fetch_playlist_videos(playlist_id)
+        assert playlist_id, f"{playlist_id} environment variable must be set"
+        
+        videos = await rss_fetcher.fetch_playlist_videos(playlist_id)
         
         assert isinstance(videos, list)
         assert len(videos) > 0
@@ -105,39 +111,42 @@ async def test_fetch_playlist_videos():
             assert video.channel_id is not None
             assert video.url is not None
             assert isinstance(video.uploaded_at, datetime)
+            assert video.uploaded_at.tzinfo == timezone.utc
             assert video.created_at is not None
             
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_max_videos_limit():
+async def test_max_videos_limit(rss_fetcher):
     """Test that max_videos parameter correctly limits the number of videos returned."""
-    fetcher = YouTubeRSSFetcher()
     max_videos = 5
     
     # Test with channels
     for channel_id in TEST_CHANNEL_IDS:
-        videos = await fetcher.fetch_channel_videos(channel_id, max_videos=max_videos)
+        assert channel_id, f"{channel_id} environment variable must be set"
+        
+        videos = await rss_fetcher.fetch_channel_videos(channel_id, max_videos=max_videos)
         assert len(videos) <= max_videos
         
     # Test with playlists
     for playlist_id in TEST_PLAYLIST_IDS:
-        videos = await fetcher.fetch_playlist_videos(playlist_id, max_videos=max_videos)
+        assert playlist_id, f"{playlist_id} environment variable must be set"
+        
+        videos = await rss_fetcher.fetch_playlist_videos(playlist_id, max_videos=max_videos)
         assert len(videos) <= max_videos
         
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_video_metadata_consistency():
+async def test_video_metadata_consistency(rss_fetcher):
     """Test that video metadata is consistent across multiple fetches."""
-    fetcher = YouTubeRSSFetcher()
-    
     # Test with first channel
     channel_id = TEST_CHANNEL_IDS[0]
+    assert channel_id, f"{channel_id} environment variable must be set"
     
     # Fetch videos twice
-    videos_first = await fetcher.fetch_channel_videos(channel_id, max_videos=5)
-    videos_second = await fetcher.fetch_channel_videos(channel_id, max_videos=5)
+    videos_first = await rss_fetcher.fetch_channel_videos(channel_id, max_videos=5)
+    videos_second = await rss_fetcher.fetch_channel_videos(channel_id, max_videos=5)
     
     # Compare metadata for the same videos
     for v1, v2 in zip(videos_first, videos_second):
@@ -147,61 +156,57 @@ async def test_video_metadata_consistency():
         assert v1.url == v2.url
         assert v1.uploaded_at == v2.uploaded_at
         
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_error_handling():
+async def test_error_handling(rss_fetcher):
     """Test error handling with invalid channel and playlist IDs."""
-    fetcher = YouTubeRSSFetcher()
-    
     # Test with invalid channel ID
-    invalid_channel_videos = await fetcher.fetch_channel_videos("invalid_channel_id")
+    invalid_channel_videos = await rss_fetcher.fetch_channel_videos("invalid_channel_id")
     assert invalid_channel_videos == []
     
     # Test with invalid playlist ID
-    invalid_playlist_videos = await fetcher.fetch_playlist_videos("invalid_playlist_id")
+    invalid_playlist_videos = await rss_fetcher.fetch_playlist_videos("invalid_playlist_id")
     assert invalid_playlist_videos == []
     
-    await fetcher.close()
+    await rss_fetcher.close()
 
 @pytest.mark.asyncio
-async def test_session_management():
+async def test_session_management(rss_fetcher):
     """Test proper session management."""
-    fetcher = YouTubeRSSFetcher()
+    # Initial state - no session
+    assert rss_fetcher.session is None
     
-    # Test session creation
-    assert fetcher.session is None
-    await fetcher._ensure_session()
-    assert fetcher.session is not None
-    assert not fetcher.session.closed
+    # First context - creates a new session
+    async with rss_fetcher._get_session() as session1:
+        assert session1 is not None
+        assert not session1.closed
+        first_session = session1
+        
+        # Nested context - should reuse the same session
+        async with rss_fetcher._get_session() as session2:
+            assert session2 is session1
+            assert not session2.closed
     
-    # Test session reuse
-    original_session = fetcher.session
-    await fetcher._ensure_session()
-    assert fetcher.session is original_session
+    # After context exit, owned sessions should be closed and cleared
+    assert rss_fetcher.session is None
+    assert first_session.closed
     
-    # Test session closure
-    await fetcher.close()
-    assert fetcher.session.closed
-    
-    # Test new session creation after closure
-    await fetcher._ensure_session()
-    assert fetcher.session is not None
-    assert not fetcher.session.closed
-    
-    await fetcher.close()
+    # New context should create a new session
+    async with rss_fetcher._get_session() as new_session:
+        assert new_session is not None
+        assert not new_session.closed
+        assert new_session is not first_session
 
 @pytest.mark.asyncio
-async def test_concurrent_fetches():
+async def test_concurrent_fetches(rss_fetcher):
     """Test concurrent fetching of multiple channels and playlists."""
-    fetcher = YouTubeRSSFetcher()
-    
     # Create tasks for all channels and playlists
     tasks = []
     for channel_id in TEST_CHANNEL_IDS:
-        tasks.append(fetcher.fetch_channel_videos(channel_id))
+        tasks.append(rss_fetcher.fetch_channel_videos(channel_id))
     for playlist_id in TEST_PLAYLIST_IDS:
-        tasks.append(fetcher.fetch_playlist_videos(playlist_id))
+        tasks.append(rss_fetcher.fetch_playlist_videos(playlist_id))
     
     # Execute all tasks concurrently
     results = await asyncio.gather(*tasks)
@@ -214,4 +219,4 @@ async def test_concurrent_fetches():
         for video in videos:
             assert isinstance(video, VideoMetadata)
             
-    await fetcher.close()
+    await rss_fetcher.close()

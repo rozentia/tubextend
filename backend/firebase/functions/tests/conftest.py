@@ -7,6 +7,15 @@ import os
 import aiohttp
 from utils.api_wrappers import YouTubeAPI
 from agents.channel_monitor import ChannelMonitorAgent
+import asyncio
+from typing import AsyncGenerator
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load test environment variables
+test_env_path = Path(__file__).parent.parent / 'test.env'
+if test_env_path.exists():
+    load_dotenv(test_env_path)
 
 @pytest.fixture(scope="session")
 def db():
@@ -80,19 +89,24 @@ def setup_test_env():
             os.environ.pop(key, None)
 
 @pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    import asyncio
-    loop = asyncio.get_event_loop_policy().new_event_loop()
+async def event_loop_policy():
+    """Create and set a new event loop policy."""
+    policy = asyncio.get_event_loop_policy()
+    return policy
+
+@pytest.fixture(scope="session")
+def event_loop(event_loop_policy):
+    """Create an instance of the default event loop for each test case."""
+    loop = event_loop_policy.new_event_loop()
     yield loop
     loop.close()
 
 @pytest.fixture(scope="session")
-async def aiohttp_session():
-    """Create a shared aiohttp session."""
-    session = aiohttp.ClientSession()
-    yield session
-    await session.close()
+async def aiohttp_session() -> AsyncGenerator[aiohttp.ClientSession, None]:
+    """Create a shared aiohttp ClientSession for tests."""
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        yield session
 
 @pytest.fixture(scope="session")
 def database():
